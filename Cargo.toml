@@ -1,0 +1,66 @@
+[package]
+name = "sockjs"
+version = "0.0.1"
+authors = ["Nikolay Kim <fafhrd91@gmail.com>"]
+description = "SockJS server for Actix"
+readme = "README.md"
+keywords = ["actor", "http", "websockets", "sockjs"]
+homepage = "https://github.com/fafhrd91/actix-sockjs"
+repository = "https://github.com/fafhrd91/actix-sockjs.git"
+documentation = "https://fafhrd91.github.io/actix-sockjs/actix-sockjs/"
+categories = ["network-programming", "asynchronous"]
+license = "Apache-2.0"
+exclude = [".gitignore", ".travis.yml", ".cargo/config", "appveyor.yml"]
+build = "build.rs"
+
+[lib]
+name = "sockjs"
+path = "src/lib.rs"
+
+#[[bin]]
+#name = "test"
+#path = "src/main.rs"
+
+[dependencies]
+time = "0.1"
+http = "0.1"
+httparse = "0.1"
+slab = "0.4"
+sha1 = "0.2"
+url = "1.5"
+route-recognizer = "0.1"
+
+hyper = "0.11"
+unicase = "2.0"
+
+# tokio
+bytes = "0.4"
+futures = "0.1"
+tokio-core = "0.1"
+tokio-io = "0.1"
+tokio-proto = "0.1"
+
+# other
+log = "0.3"
+env_logger = "*"
+
+#actix = { git="https://github.com/fafhrd91/actix.git" }
+
+[dependencies.actix]
+#path = "../actix"
+git = "https://github.com/fafhrd91/actix.git"
+
+[dependencies.actix-http]
+#path = "../actix-http"
+git = "https://github.com/fafhrd91/actix-http.git"
+
+[dev-dependencies]
+skeptic = "0.13"
+
+[build-dependencies]
+skeptic = "0.13"
+
+[profile.release]
+lto = true
+opt-level = 3
+debug = true
