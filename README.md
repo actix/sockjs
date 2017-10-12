@@ -3,7 +3,7 @@
 SockJS server for for Actix framework.
 
 * [API Documentation](http://fafhrd91.github.io/actix-sockjs/sockjs/)
-* Cargo package: [actix-http](https://crates.io/crates/actix-sockjs)
+* Cargo package: [sockjs](https://crates.io/crates/sockjs)
 * Minimum supported Rust version: 1.20 or later
 
 ---
@@ -12,7 +12,7 @@ SockJS is licensed under the [Apache-2.0 license](http://opensource.org/licenses
 
 ## Usage
 
-To use `actix-sockjs`, add this to your `Cargo.toml`:
+To use `sockjs`, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
