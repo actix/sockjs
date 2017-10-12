@@ -1,6 +1,6 @@
 # SockJS server [![Build Status](https://travis-ci.org/fafhrd91/actix-sockjs.svg?branch=master)](https://travis-ci.org/fafhrd91/actix-sockjs)
 
-SockJS server for for Actix framework.
+[SockJS](https://github.com/sockjs) server for for Actix framework.
 
 * [API Documentation](http://fafhrd91.github.io/actix-sockjs/sockjs/)
 * Cargo package: [sockjs](https://crates.io/crates/sockjs)
