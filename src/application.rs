@@ -87,28 +87,30 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
                             .body("Welcome to SockJS!\n"))
                 },
                 RouteType::Info => {
-                    let resp = if *req.method() == Method::GET {
-                        httpcodes::HTTPOk
-                            .builder()
-                            .content_type("application/json;charset=UTF-8")
-                            .sockjs_cache_control()
-                            .sockjs_cors_headers(req.headers())
-                            .json_body(Info::new(
-                                self.rng.borrow_mut().gen::<u32>(), true, true)).unwrap()
+                    return if *req.method() == Method::GET {
+                        Task::reply(
+                            httpcodes::HTTPOk
+                                .builder()
+                                .content_type("application/json;charset=UTF-8")
+                                .sockjs_cache_control()
+                                .sockjs_cors_headers(req.headers())
+                                .json_body(Info::new(
+                                    self.rng.borrow_mut().gen::<u32>(), true, true)))
                     } else if *req.method() == Method::OPTIONS {
                         let _ = req.load_cookies();
-                        httpcodes::HTTPNoContent
-                            .builder()
-                            .content_type("application/json;charset=UTF-8")
-                            .sockjs_cache_control()
-                            .sockjs_allow_methods()
-                            .sockjs_cors_headers(req.headers())
-                            .sockjs_session_cookie(&req)
-                            .finish().unwrap()
+                        Task::reply(
+                            httpcodes::HTTPNoContent
+                                .builder()
+                                .content_type("application/json;charset=UTF-8")
+                                .sockjs_cache_control()
+                                .sockjs_allow_methods()
+                                .sockjs_cors_headers(req.headers())
+                                .sockjs_session_cookie(&req)
+                                .finish()
+                        )
                     } else {
-                        httpcodes::HTTPMethodNotAllowed.response()
+                        Task::reply(httpcodes::HTTPMethodNotAllowed)
                     };
-                    return Task::reply(resp)
                 },
                 RouteType::IFrame => {
                     let resp = if req.headers().contains_key(header::IF_NONE_MATCH) {
@@ -116,7 +118,7 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
                             .builder()
                             .content_type("")
                             .sockjs_cache_headers()
-                            .finish().unwrap()
+                            .finish()
                     } else {
                         httpcodes::HTTPOk
                             .builder()
@@ -131,7 +133,7 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
             }
         }
 
-        return Task::reply(httpcodes::HTTPMethodNotAllowed.response())
+        return Task::reply(httpcodes::HTTPMethodNotAllowed)
     }
 
     fn set_prefix(&mut self, prefix: String) {
