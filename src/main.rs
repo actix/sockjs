@@ -1,24 +1,19 @@
 #![allow(dead_code, unused_imports, unused_variables)]
 extern crate actix;
-extern crate actix_http;
+extern crate actix_web;
 extern crate sockjs;
 extern crate env_logger;
 
 use std::net;
 use std::str::FromStr;
+use actix_web::*;
 use actix::prelude::*;
-use actix_http::*;
 
 
 struct MyApp;
 
 impl Actor for MyApp {
     type Context = sockjs::SockJSContext<Self>;
-}
-
-impl ResponseType<sockjs::Message> for MyApp {
-    type Item = ();
-    type Error = ();
 }
 
 impl Handler<sockjs::Message> for MyApp {
@@ -36,16 +31,10 @@ fn main() {
 
     let sys = actix::System::new("sockjs-example");
 
-    let mut routes = RoutingMap::default();
-
-    let mut app = Application::default();
-    app.add_handler("/", sockjs::SockJS::<MyApp, _, _>::new(sockjs::SM::new()));
-
-    routes.add("/ws/", app);
-
-    let http = HttpServer::new(routes);
-    http.serve::<()>(
-        &net::SocketAddr::from_str("127.0.0.1:9080").unwrap()).unwrap();
+    let http = HttpServer::new(
+        Application::default("/")
+            .route_handler("/", sockjs::SockJS::<MyApp, _, _>::new(sockjs::SM::new())))
+        .serve::<_, ()>("127.0.0.1:9080").unwrap();
 
     let _ = sys.run();
 }

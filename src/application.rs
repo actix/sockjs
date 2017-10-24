@@ -8,7 +8,8 @@ use bytes::Bytes;
 use http::Method;
 use http::header::{self, HeaderValue, CONTENT_TYPE};
 use actix::dev::*;
-use actix_http::dev::*;
+use actix_web::*;
+use actix_web::dev::*;
 
 use context::SockJSContext;
 use manager::SessionManager;
@@ -53,7 +54,7 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
     where A: Actor<Context=SockJSContext<A>> + Handler<Message>,
           T: SessionManager,
 {
-    fn handle(&self, req: HttpRequest, payload: Payload, state: Rc<S>) -> Task {
+    fn handle(&self, req: &mut HttpRequest, payload: Payload, state: Rc<S>) -> Task {
         let route = {
             let path = &req.path()[self.prefix..];
             println!("====== {:?}", path);
@@ -72,41 +73,42 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
         match route {
             RouteType::Greeting => {
                 Task::reply(
-                    req, httpcodes::HTTPOk
+                    httpcodes::HTTPOk
                         .builder()
-                        .header(CONTENT_TYPE,
-                                HeaderValue::from_static("text/plain; charset=UTF-8"))
+                        .content_type("text/plain; charset=UTF-8")
                         .body(Body::Binary(
                             Bytes::from_static(b"Welcome to SockJS!\n".as_ref()))))
             },
             RouteType::Info => {
                 let resp = httpcodes::HTTPOk
                     .builder()
-                    .header(CONTENT_TYPE, "application/json;charset=UTF-8")
+                    .content_type("application/json;charset=UTF-8")
                     .sockjs_cache_control()
                     .sockjs_cors_headers(req.headers())
                     .json_body(Info::new(self.rng.borrow_mut().gen::<u32>(), true, true));
-                Task::reply(req, resp)
+                Task::reply(resp)
             },
             RouteType::InfoOptions => {
+                let mut req = req;
+                let _ = req.load_cookies();
                 let resp = httpcodes::HTTPNoContent
                     .builder()
-                    .header(CONTENT_TYPE, "application/json;charset=UTF-8")
+                    .content_type("application/json;charset=UTF-8")
                     .sockjs_cache_control()
                     .sockjs_allow_methods()
                     .sockjs_cors_headers(req.headers())
+                    .sockjs_session_cookie(&req)
                     .body(Body::Empty);
-                Task::reply(req, resp)
+                Task::reply(resp)
             },
             RouteType::Unknown => {
-                Task::reply(req, httpcodes::HTTPNotFound)
+                Task::reply(httpcodes::HTTPNotFound)
             }
         }
     }
 
     fn set_prefix(&mut self, prefix: String) {
         self.prefix = prefix.len();
-        println!("PREFIX: {:?}", prefix);
     }
 }
 
@@ -121,24 +123,15 @@ impl<S: 'static> Actor for SockJSRoute<S> {
 impl<S: 'static> Route for SockJSRoute<S> {
     type State = S;
 
-    fn request(req: HttpRequest, payload: Payload, ctx: &mut HttpContext<Self>) -> Reply<Self> {
-        match ws::handshake(&req) {
-            Ok(resp) => {
-                ctx.start(req, resp);
-                ctx.add_stream(ws::WsStream::new(payload));
-                Reply::stream(SockJSRoute{state: PhantomData})
-            },
-            Err(err) =>
-                Reply::reply(req, err)
-        }
+    fn request(req: &mut HttpRequest, payload: Payload,
+               ctx: &mut HttpContext<Self>) -> RouteResult<Self> {
+        let resp = ws::handshake(&req)?;
+        ctx.start(resp);
+        ctx.add_stream(ws::WsStream::new(payload));
+        Reply::async(SockJSRoute{state: PhantomData})
     }
 }
 
-
-impl<S: 'static> ResponseType<ws::Message> for SockJSRoute<S> {
-    type Item = ();
-    type Error = ();
-}
 
 impl<S: 'static> StreamHandler<ws::Message> for SockJSRoute<S> {}
 
@@ -149,7 +142,7 @@ impl<S: 'static> Handler<ws::Message> for SockJSRoute<S> {
         println!("WS: {:?}", msg);
         match msg {
             ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, msg),
-            ws::Message::Text(text) => ws::WsWriter::text(ctx, text),
+            ws::Message::Text(text) => ws::WsWriter::text(ctx, &text),
             ws::Message::Binary(bin) => ws::WsWriter::binary(ctx, bin),
             _ => (),
         }

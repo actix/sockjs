@@ -21,7 +21,7 @@ extern crate serde_derive;
 
 extern crate http;
 extern crate actix;
-extern crate actix_http;
+extern crate actix_web;
 
 mod context;
 mod application;

@@ -11,9 +11,10 @@ pub struct SockJSContext<A> where A: Actor<Context=SockJSContext<A>>,
 {
     act: A,
     state: ActorState,
+    modified: bool,
+    wait: ActorWaitCell<A>,
     items: ActorItemsCell<A>,
     address: ActorAddressCell<A>,
-    wait: Option<Box<ActorFuture<Item=(), Error=(), Actor=A>>>,
 }
 
 impl<A> ActorContext<A> for SockJSContext<A> where A: Actor<Context=Self>
@@ -44,16 +45,19 @@ impl<A> AsyncContext<A> for SockJSContext<A> where A: Actor<Context=Self>
     fn spawn<F>(&mut self, fut: F) -> SpawnHandle
         where F: ActorFuture<Item=(), Error=(), Actor=A> + 'static
     {
+        self.modified = true;
         self.items.spawn(fut)
     }
 
     fn wait<F>(&mut self, fut: F)
         where F: ActorFuture<Item=(), Error=(), Actor=A> + 'static
     {
-        self.wait = Some(Box::new(fut));
+        self.modified = true;
+        self.wait.add(fut);
     }
 
     fn cancel_future(&mut self, handle: SpawnHandle) -> bool {
+        self.modified = true;
         self.items.cancel_future(handle)
     }
 }
@@ -67,8 +71,9 @@ impl<A> AsyncContextApi<A> for SockJSContext<A> where A: Actor<Context=Self> {
 impl<A> SockJSContext<A> where A: Actor<Context=Self>
 {
     #[doc(hidden)]
-    pub fn subscriber<M: 'static>(&mut self) -> Box<Subscriber<M>>
-        where A: Handler<M>
+    pub fn subscriber<M>(&mut self) -> Box<Subscriber<M>>
+        where A: Handler<M>,
+              M: ResponseType + 'static
     {
         Box::new(self.address.unsync_address())
     }
@@ -96,9 +101,10 @@ impl<A> SockJSContext<A> where A: Actor<Context=Self>
         SockJSContext {
             act: act,
             state: ActorState::Started,
+            modified: false,
             items: ActorItemsCell::default(),
             address: ActorAddressCell::default(),
-            wait: None,
+            wait: ActorWaitCell::default(),
         }
     }
 
@@ -138,28 +144,23 @@ impl<A> Future for SockJSContext<A> where A: Actor<Context=Self>
             _ => ()
         }
 
-        // check wait future
-        if self.wait.is_some() {
-            if let Some(ref mut fut) = self.wait {
-                if let Ok(Async::NotReady) = fut.poll(&mut self.act, ctx) {
-                    return Ok(Async::NotReady)
-                }
-            }
-            self.wait = None;
-        }
-
         let mut prep_stop = false;
         loop {
-            let mut not_ready = true;
+            self.modified = false;
 
-            if let Ok(Async::Ready(_)) = self.address.poll(&mut self.act, ctx) {
-                not_ready = false
+            // check wait futures
+            if self.wait.poll(&mut self.act, ctx) {
+                return Ok(Async::NotReady)
             }
 
+            // incoming messages
+            self.address.poll(&mut self.act, ctx);
+
+            // spawned futures and streams
             self.items.poll(&mut self.act, ctx);
 
             // are we done
-            if !not_ready {
+            if self.modified {
                 continue
             }
 

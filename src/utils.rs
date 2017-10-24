@@ -1,4 +1,4 @@
-use actix_http::{Body, Builder, HttpResponse};
+use actix_web::{Body, Cookie, HttpRequest, HttpResponse, HttpResponseBuilder};
 use http::Error;
 use http::header::{self, HeaderMap, HeaderValue};
 use http::header::{ORIGIN,
@@ -39,32 +39,32 @@ pub(crate) trait SockjsHeaders {
 
     fn json_body<T: Serialize>(&mut self, body: T) -> Result<HttpResponse, Error>;
 
-    fn sockjs_session_cookie(&mut self) -> &mut Self;
-
     fn sockjs_allow_methods(&mut self) -> &mut Self;
 
     fn sockjs_cache_control(&mut self) -> &mut Self;
 
     fn sockjs_cors_headers(&mut self, headers: &HeaderMap) -> &mut Self;
+
+    fn sockjs_session_cookie(&mut self, req: &HttpRequest) -> &mut Self;
+
 }
 
 
-impl SockjsHeaders for Builder {
+impl SockjsHeaders for HttpResponseBuilder {
 
     fn json_body<T: Serialize>(&mut self, body: T) -> Result<HttpResponse, Error> {
         let serialized = serde_json::to_string(&body).unwrap();
         self.body(Body::Binary(serialized.into_bytes().into()))
     }
 
-    fn sockjs_session_cookie(&mut self) -> &mut Self {
-        //cookie = request.cookies.get('JSESSIONID', 'dummy')
-        //cookies = http.cookies.SimpleCookie()
-        //cookies['JSESSIONID'] = cookie
-        //cookies['JSESSIONID']['path'] = '/'
-        //return ((hdrs.SET_COOKIE, cookies['JSESSIONID'].output(header='')[1:]),)
+    fn sockjs_session_cookie(&mut self, req: &HttpRequest) -> &mut Self {
+        if req.cookie("JSESSIONID").is_none() {
+            self.cookie(Cookie::build("JSESSIONID", "dummy")
+                        .path("/")
+                        .finish());
+        }
         self
     }
-
 
     fn sockjs_allow_methods(&mut self) -> &mut Self {
         self.header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, GET")
