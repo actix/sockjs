@@ -1,4 +1,4 @@
-# SockJS server [![Build Status](https://travis-ci.org/fafhrd91/actix-sockjs.svg?branch=master)](https://travis-ci.org/fafhrd91/actix-sockjs)
+# [WIP] SockJS server [![Build Status](https://travis-ci.org/fafhrd91/actix-sockjs.svg?branch=master)](https://travis-ci.org/fafhrd91/actix-sockjs)
 
 [SockJS](https://github.com/sockjs) server for for Actix framework.
 
