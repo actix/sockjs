@@ -26,7 +26,7 @@ pub struct SockJS<A, T, S=()> where A: Actor<Context=SockJSContext<A>> {
     prefix: usize,
     rng: RefCell<ThreadRng>,
     router: RouteRecognizer<RouteType>,
-    iframe_html: String,
+    iframe_html: Rc<String>,
     iframe_html_md5: String,
     // factory: RouteFactory<A, S>,
 }
@@ -57,7 +57,7 @@ impl<A, T, S> SockJS<A, T, S>
             rng: RefCell::new(rand::thread_rng()),
             manager: Rc::new(manager),
             router: RouteRecognizer::new("/", routes),
-            iframe_html: html,
+            iframe_html: Rc::new(html),
             iframe_html_md5: format!("{:x}", digest),
         }
     }
@@ -84,8 +84,7 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
                         httpcodes::HTTPOk
                             .builder()
                             .content_type("text/plain; charset=UTF-8")
-                            .body(Body::Binary(
-                                Bytes::from_static(b"Welcome to SockJS!\n".as_ref()))))
+                            .body("Welcome to SockJS!\n"))
                 },
                 RouteType::Info => {
                     let resp = if *req.method() == Method::GET {
@@ -105,7 +104,7 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
                             .sockjs_allow_methods()
                             .sockjs_cors_headers(req.headers())
                             .sockjs_session_cookie(&req)
-                            .body(Body::Empty).unwrap()
+                            .finish().unwrap()
                     } else {
                         httpcodes::HTTPMethodNotAllowed.response()
                     };
@@ -117,14 +116,14 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
                             .builder()
                             .content_type("")
                             .sockjs_cache_headers()
-                            .body(Body::Empty)
+                            .finish().unwrap()
                     } else {
                         httpcodes::HTTPOk
                             .builder()
                             .content_type("text/html;charset=UTF-8")
                             .header(header::ETAG, self.iframe_html_md5.as_str())
                             .sockjs_cache_headers()
-                            .body(Body::Binary(self.iframe_html.clone().into()))
+                            .body(&self.iframe_html)
                     };
                     return Task::reply(resp)
                 },

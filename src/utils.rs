@@ -59,7 +59,7 @@ impl SockjsHeaders for HttpResponseBuilder {
 
     fn json_body<T: Serialize>(&mut self, body: T) -> Result<HttpResponse, Error> {
         let serialized = serde_json::to_string(&body).unwrap();
-        self.body(Body::Binary(serialized.into_bytes().into()))
+        self.body(serialized.into_bytes())
     }
 
     fn sockjs_session_cookie(&mut self, req: &HttpRequest) -> &mut Self {
