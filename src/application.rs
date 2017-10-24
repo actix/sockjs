@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 
+use md5;
 use rand::{self, Rng, ThreadRng};
 use bytes::Bytes;
 use http::Method;
@@ -11,6 +12,7 @@ use actix::dev::*;
 use actix_web::*;
 use actix_web::dev::*;
 
+use protocol;
 use context::SockJSContext;
 use manager::SessionManager;
 use session::Message;
@@ -23,6 +25,9 @@ pub struct SockJS<A, T, S=()> where A: Actor<Context=SockJSContext<A>> {
     state: PhantomData<S>,
     prefix: usize,
     rng: RefCell<ThreadRng>,
+    router: RouteRecognizer<RouteType>,
+    iframe_html: String,
+    iframe_html_md5: String,
     // factory: RouteFactory<A, S>,
 }
 
@@ -33,21 +38,38 @@ impl<A, T, S> SockJS<A, T, S>
 {
     pub fn new(manager: T) -> Self
     {
+        let routes = vec![
+            ("/", RouteType::Greeting),
+            ("/info", RouteType::Info),
+            ("/{server}/{session}/{transport}", RouteType::Transport),
+            ("/websocket", RouteType::Websocket),
+            ("/iframe.html", RouteType::IFrame),
+            ("/iframe{version}.html", RouteType::IFrame),
+        ].into_iter().map(|(s, t)| (s.to_owned(), t));
+
+        let html = protocol::IFRAME_HTML.to_owned();
+        let digest = md5::compute(&html);
+
         SockJS {
             act: PhantomData,
             state: PhantomData,
             prefix: 0,
             rng: RefCell::new(rand::thread_rng()),
             manager: Rc::new(manager),
+            router: RouteRecognizer::new("/", routes),
+            iframe_html: html,
+            iframe_html_md5: format!("{:x}", digest),
         }
     }
 }
 
+#[derive(Debug)]
 enum RouteType {
     Greeting,
     Info,
-    InfoOptions,
-    Unknown,
+    Transport,
+    Websocket,
+    IFrame,
 }
 
 impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
@@ -55,60 +77,67 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
           T: SessionManager,
 {
     fn handle(&self, req: &mut HttpRequest, payload: Payload, state: Rc<S>) -> Task {
-        let route = {
-            let path = &req.path()[self.prefix..];
-            println!("====== {:?}", path);
-            if path.is_empty() {
-                RouteType::Greeting
-            } else if path == "info" {
-                match req.method() {
-                    &Method::GET => RouteType::Info,
-                    &Method::OPTIONS => RouteType::InfoOptions,
-                    _ => RouteType::Unknown,
-                }
-            } else {
-                RouteType::Unknown
-            }
-        };
-        match route {
-            RouteType::Greeting => {
-                Task::reply(
-                    httpcodes::HTTPOk
-                        .builder()
-                        .content_type("text/plain; charset=UTF-8")
-                        .body(Body::Binary(
-                            Bytes::from_static(b"Welcome to SockJS!\n".as_ref()))))
-            },
-            RouteType::Info => {
-                let resp = httpcodes::HTTPOk
-                    .builder()
-                    .content_type("application/json;charset=UTF-8")
-                    .sockjs_cache_control()
-                    .sockjs_cors_headers(req.headers())
-                    .json_body(Info::new(self.rng.borrow_mut().gen::<u32>(), true, true));
-                Task::reply(resp)
-            },
-            RouteType::InfoOptions => {
-                let mut req = req;
-                let _ = req.load_cookies();
-                let resp = httpcodes::HTTPNoContent
-                    .builder()
-                    .content_type("application/json;charset=UTF-8")
-                    .sockjs_cache_control()
-                    .sockjs_allow_methods()
-                    .sockjs_cors_headers(req.headers())
-                    .sockjs_session_cookie(&req)
-                    .body(Body::Empty);
-                Task::reply(resp)
-            },
-            RouteType::Unknown => {
-                Task::reply(httpcodes::HTTPNotFound)
+        if let Some((params, route)) = self.router.recognize(req.path()) {
+            match *route {
+                RouteType::Greeting => {
+                    return Task::reply(
+                        httpcodes::HTTPOk
+                            .builder()
+                            .content_type("text/plain; charset=UTF-8")
+                            .body(Body::Binary(
+                                Bytes::from_static(b"Welcome to SockJS!\n".as_ref()))))
+                },
+                RouteType::Info => {
+                    let resp = if *req.method() == Method::GET {
+                        httpcodes::HTTPOk
+                            .builder()
+                            .content_type("application/json;charset=UTF-8")
+                            .sockjs_cache_control()
+                            .sockjs_cors_headers(req.headers())
+                            .json_body(Info::new(
+                                self.rng.borrow_mut().gen::<u32>(), true, true)).unwrap()
+                    } else if *req.method() == Method::OPTIONS {
+                        let _ = req.load_cookies();
+                        httpcodes::HTTPNoContent
+                            .builder()
+                            .content_type("application/json;charset=UTF-8")
+                            .sockjs_cache_control()
+                            .sockjs_allow_methods()
+                            .sockjs_cors_headers(req.headers())
+                            .sockjs_session_cookie(&req)
+                            .body(Body::Empty).unwrap()
+                    } else {
+                        httpcodes::HTTPMethodNotAllowed.response()
+                    };
+                    return Task::reply(resp)
+                },
+                RouteType::IFrame => {
+                    let resp = if req.headers().contains_key(header::IF_NONE_MATCH) {
+                        httpcodes::HTTPNotModified
+                            .builder()
+                            .content_type("")
+                            .sockjs_cache_headers()
+                            .body(Body::Empty)
+                    } else {
+                        httpcodes::HTTPOk
+                            .builder()
+                            .content_type("text/html;charset=UTF-8")
+                            .header(header::ETAG, self.iframe_html_md5.as_str())
+                            .sockjs_cache_headers()
+                            .body(Body::Binary(self.iframe_html.clone().into()))
+                    };
+                    return Task::reply(resp)
+                },
+                _ => ()
             }
         }
+
+        return Task::reply(httpcodes::HTTPMethodNotAllowed.response())
     }
 
     fn set_prefix(&mut self, prefix: String) {
         self.prefix = prefix.len();
+        self.router.set_prefix(prefix);
     }
 }
 

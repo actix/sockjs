@@ -6,6 +6,7 @@ extern crate log;
 extern crate time;
 extern crate bytes;
 extern crate sha1;
+extern crate md5;
 extern crate url;
 extern crate rand;
 #[macro_use]
@@ -28,6 +29,7 @@ mod application;
 mod manager;
 mod session;
 mod utils;
+mod protocol;
 
 pub use application::SockJS;
 pub use context::SockJSContext;
