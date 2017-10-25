@@ -1,5 +1,56 @@
+#![allow(dead_code, unused_variables)]
+use std::fmt::Debug;
 
+use session::SessionError;
 
+pub enum Message {
+    Open,
+    Msg,
+    Close,
+    Closed,
+}
+
+pub enum Frame {
+    Open,
+    Close(CloseCode),
+    Message,
+    MessageBlob,
+    Heartbeat,
+}
+
+pub enum CloseCode {
+    Interrupted,
+    GoAway,
+    Acquired,
+}
+
+impl CloseCode {
+    pub fn num(&self) -> usize {
+        match *self {
+            CloseCode::Interrupted => 1002,
+            CloseCode::GoAway => 3000,
+            CloseCode::Acquired => 2010,
+        }
+    }
+
+    pub fn reason(&self) -> &'static str {
+        match *self {
+            CloseCode::Interrupted => "Connection interrupted",
+            CloseCode::GoAway => "Go away!",
+            CloseCode::Acquired => "Another connection still open",
+        }
+    }
+}
+
+impl From<SessionError> for Frame {
+    fn from(err: SessionError) -> Frame {
+        match err {
+            SessionError::Acquired => Frame::Close(CloseCode::Acquired),
+            SessionError::Interrupted => Frame::Close(CloseCode::Interrupted),
+            SessionError::Closing => Frame::Close(CloseCode::GoAway),
+        }
+    }
+}
 
 pub const IFRAME_HTML: &'static str = r#"<!DOCTYPE html>
 <html>

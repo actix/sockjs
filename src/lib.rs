@@ -30,8 +30,9 @@ mod manager;
 mod session;
 mod utils;
 mod protocol;
+mod transports;
 
 pub use application::SockJS;
 pub use context::SockJSContext;
-pub use manager::{SM, SessionManager};
+pub use manager::SessionManager;
 pub use session::{Message, State, Session};

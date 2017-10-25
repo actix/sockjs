@@ -14,13 +14,17 @@ use actix_web::dev::*;
 
 use protocol;
 use context::SockJSContext;
-use manager::SessionManager;
-use session::Message;
+use manager::{Acquire, Release, SessionManager};
+use session::{Message, Session};
 use utils::{Info, SockjsHeaders};
+use transports::EventSource;
 
 
-pub struct SockJS<A, T, S=()> where A: Actor<Context=SockJSContext<A>> {
-    manager: Rc<T>,
+pub struct SockJS<A, SM, S=()>
+    where A: Actor<Context=SockJSContext<A>> + Session,
+          SM: Actor + Handler<Acquire<A>> + Handler<Release>,
+{
+    manager: Rc<SyncAddress<SM>>,
     act: PhantomData<A>,
     state: PhantomData<S>,
     prefix: usize,
@@ -31,12 +35,12 @@ pub struct SockJS<A, T, S=()> where A: Actor<Context=SockJSContext<A>> {
     // factory: RouteFactory<A, S>,
 }
 
-impl<A, T, S> SockJS<A, T, S>
-    where A: Actor<Context=SockJSContext<A>> + Handler<Message>,
-          T: SessionManager,
+impl<A, SM, S> SockJS<A, SM, S>
+    where A: Actor<Context=SockJSContext<A>> + Session,
+          SM: Actor + Handler<Acquire<A>> + Handler<Release>,
           S: 'static,
 {
-    pub fn new(manager: T) -> Self
+    pub fn new(manager: SyncAddress<SM>) -> Self
     {
         let routes = vec![
             ("/", RouteType::Greeting),
@@ -72,9 +76,10 @@ enum RouteType {
     IFrame,
 }
 
-impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
-    where A: Actor<Context=SockJSContext<A>> + Handler<Message>,
-          T: SessionManager,
+impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
+    where A: Actor<Context=SockJSContext<A>> + Session,
+          SM: Actor + Handler<Acquire<A>> + Handler<Release>,
+          S: 'static
 {
     fn handle(&self, req: &mut HttpRequest, payload: Payload, state: Rc<S>) -> Task {
         if let Some((params, route)) = self.router.recognize(req.path()) {
@@ -128,6 +133,17 @@ impl<A, T: 'static, S: 'static> RouteHandler<S> for SockJS<A, T, S>
                             .body(&self.iframe_html)
                     };
                     return Task::reply(resp)
+                },
+                RouteType::Transport => {
+                    if let Some(params) = params {
+                        req.set_match_info(params);
+                    }
+
+                    let mut ctx = HttpContext::new(self.manager.clone());
+                    return match EventSource::request(req, payload, &mut ctx) {
+                        Ok(reply) => reply.into(ctx),
+                        Err(err) => Task::reply(err),
+                    }
                 },
                 _ => ()
             }

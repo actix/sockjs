@@ -4,10 +4,11 @@ use std;
 
 use bytes::Bytes;
 use futures::{Async, Future, Poll};
+use futures::sync::oneshot::Sender;
 use actix::dev::*;
 
 /// SockJS Context
-pub struct SockJSContext<A> where A: Actor<Context=SockJSContext<A>>,
+pub struct SockJSContext<A> where A: Actor, A::Context: AsyncContext<A>
 {
     act: A,
     state: ActorState,
@@ -209,5 +210,18 @@ impl<A> std::fmt::Debug for SockJSContext<A> where A: Actor<Context=Self> {
                self as *const _,
                &self.act as *const _,
                self.state, "-", self.items.is_empty())
+    }
+}
+
+impl<A> ToEnvelope<A> for SockJSContext<A>
+    where A: Actor<Context=SockJSContext<A>>,
+{
+    fn pack<M>(msg: M, tx: Option<Sender<Result<M::Item, M::Error>>>) -> Envelope<A>
+        where A: Handler<M>,
+              M: ResponseType + Send + 'static,
+              M::Item: Send,
+              M::Error: Send
+    {
+        RemoteEnvelope::new(msg, tx).into()
     }
 }

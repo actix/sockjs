@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use actix::*;
 
 
@@ -19,6 +20,19 @@ impl ResponseType for Message {
     type Error = ();
 }
 
-pub trait Session {
+pub enum SessionError {
+    Acquired,
+    Interrupted,
+    Closing,
+}
 
+pub trait Session: Default + Debug + 'static {
+    type Message: Send;
+    type State: Default + Send + 'static;
+
+    fn acquired(&mut self) {}
+
+    fn released(&mut self) {}
+
+    fn handle(&mut self) {}
 }
