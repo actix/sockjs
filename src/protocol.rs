@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_variables)]
 use std::fmt::Debug;
-
+use bytes::Bytes;
 use session::SessionError;
 
 pub enum Message {
@@ -13,8 +13,8 @@ pub enum Message {
 pub enum Frame {
     Open,
     Close(CloseCode),
-    Message,
-    MessageBlob,
+    Message(String),
+    MessageBlob(Bytes),
     Heartbeat,
 }
 
@@ -22,6 +22,7 @@ pub enum CloseCode {
     Interrupted,
     GoAway,
     Acquired,
+    InternalError,
 }
 
 impl CloseCode {
@@ -30,6 +31,7 @@ impl CloseCode {
             CloseCode::Interrupted => 1002,
             CloseCode::GoAway => 3000,
             CloseCode::Acquired => 2010,
+            CloseCode::InternalError => 3000,
         }
     }
 
@@ -38,6 +40,7 @@ impl CloseCode {
             CloseCode::Interrupted => "Connection interrupted",
             CloseCode::GoAway => "Go away!",
             CloseCode::Acquired => "Another connection still open",
+            CloseCode::InternalError => "Internal error",
         }
     }
 }
@@ -48,6 +51,7 @@ impl From<SessionError> for Frame {
             SessionError::Acquired => Frame::Close(CloseCode::Acquired),
             SessionError::Interrupted => Frame::Close(CloseCode::Interrupted),
             SessionError::Closing => Frame::Close(CloseCode::GoAway),
+            SessionError::InternalError => Frame::Close(CloseCode::InternalError),
         }
     }
 }

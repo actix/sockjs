@@ -1,38 +1,37 @@
 #![allow(dead_code, unused_variables)]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Instant, Duration};
 use std::marker::PhantomData;
+use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
 use actix::*;
-use session::{State, Session, SessionError};
-use transports::Message;
+use context::{SockJSContext, SockJSChannel};
+use session::{Message, Session, SessionState, SessionError};
 
+pub trait SessionManager<S: Session>: Actor +
+    Handler<Acquire> + Handler<Release> + Handler<SessionMessage> {}
 
 /// Acquire message
 #[derive(Debug)]
-pub struct Acquire<S: Session> {
+pub struct Acquire {
     sid: String,
-    ses: PhantomData<S>,
 }
-impl<S: Session> Acquire<S> {
+impl Acquire {
     pub fn new(sid: String) -> Self {
         Acquire{
             sid: sid,
-            ses: PhantomData,
         }
     }
 }
 
-unsafe impl<S: Session> Send for Acquire<S> {}
-
-impl<S: Session> ResponseType for Acquire<S> {
-    type Item = Record<S>;
+impl ResponseType for Acquire {
+    type Item = (Record, UnboundedReceiver<Message>);
     type Error = SessionError;
 }
 
 /// Release message
 pub struct Release {
-    pub sid: String,
+    pub ses: Record,
 }
 
 impl ResponseType for Release {
@@ -40,36 +39,66 @@ impl ResponseType for Release {
     type Error = ();
 }
 
-/// Session record
-pub struct Record<S: Session> {
-    st: State,
-    state: S::State,
-    messages: Vec<S::Message>,
-    tick: Instant,
+/// Session message
+pub struct SessionMessage {
+    pub sid: String,
+    pub msg: Message,
 }
 
-impl<S: Session> Default for Record<S> {
-    fn default() -> Record<S> {
+impl ResponseType for SessionMessage {
+    type Item = ();
+    type Error = ();
+}
+
+/// Session record
+pub struct Record {
+    /// Session id
+    sid: String,
+    /// Session state
+    pub state: SessionState,
+    /// Peer messages, buffer for peer messages when transport is not connected
+    pub messages: VecDeque<Message>,
+    /// heartbeat
+    tick: Instant,
+    /// Channel to context
+    tx: UnboundedSender<SockJSChannel>,
+}
+
+impl Record {
+    fn new(id: String, tx: UnboundedSender<SockJSChannel>) -> Record {
         Record {
-            st: State::New,
-            state: S::State::default(),
-            messages: Vec::new(),
+            sid: id,
+            state: SessionState::New,
+            messages: VecDeque::new(),
             tick: Instant::now(),
+            tx: tx,
         }
     }
 }
 
-
-/// Session manager
-pub struct SessionManager<S: Session> {
-    acquired: HashMap<String, Box<Subscriber<Message<S::Message>> + Send>>,
-    sessions: HashMap<String, Option<Record<S>>>,
+struct Entry<S: Session> {
+    addr: SyncAddress<S>,
+    record: Option<Record>,
 }
 
-impl<S: Session> SessionManager<S> {
-    pub fn new() -> SessionManager<S> {
-        SessionManager {
-            acquired: HashMap::new(),
+impl<S: Session> Entry<S> {
+    fn is_acquired(&self) -> bool {
+        self.record.is_none()
+    }
+}
+
+/// Session manager
+pub struct SockJSManager<S: Session> {
+    idle: HashSet<String>,
+    sessions: HashMap<String, Entry<S>>,
+}
+
+impl<S: Session> SessionManager<S> for SockJSManager<S> {}
+
+impl<S: Session> SockJSManager<S> {
+    pub fn new() -> SockJSManager<S> {
+        SockJSManager {
+            idle: HashSet::new(),
             sessions: HashMap::new(),
         }
     }
@@ -81,7 +110,7 @@ impl<S: Session> SessionManager<S> {
     }
 }
 
-impl<S: Session> Actor for SessionManager<S> {
+impl<S: Session> Actor for SockJSManager<S> {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
@@ -89,27 +118,49 @@ impl<S: Session> Actor for SessionManager<S> {
     }
 }
 
-impl<S: Session> Handler<Acquire<S>> for SessionManager<S> {
-    fn handle(&mut self, msg: Acquire<S>, ctx: &mut Context<Self>)
-              -> Response<Self, Acquire<S>>
+impl<S: Session> Handler<Acquire> for SockJSManager<S> {
+    fn handle(&mut self, msg: Acquire, ctx: &mut Context<Self>) -> Response<Self, Acquire>
     {
-        if let Some(ref val) = self.sessions.get_mut(&msg.sid) {
-            if val.is_none() {
-                println!("acquired");
+        if let Some(val) = self.sessions.get_mut(&msg.sid) {
+            if let Some(rec) = val.record.take() {
+                let (tx, rx) = unbounded();
+                let _ = rec.tx.unbounded_send(SockJSChannel::Acquired(tx));
+                self.idle.remove(&msg.sid);
+                return Self::reply((rec, rx))
             } else {
-                println!("existing");
+                return Self::reply_error(SessionError::Acquired)
             }
-            return Self::reply_error(SessionError::Acquired)
         }
-        println!("create");
-        self.sessions.insert(msg.sid, None);
-        let rec = Record::default();
-        Self::reply(rec)
+        let (addr, tx) = SockJSContext::start();
+        self.sessions.insert(msg.sid.clone(), Entry{addr: addr, record: None});
+        let rec = Record::new(msg.sid, tx);
+        let (tx, rx) = unbounded();
+        let _ = rec.tx.unbounded_send(SockJSChannel::Acquired(tx));
+        Self::reply((rec, rx))
     }
 }
 
-impl<S: Session + 'static> Handler<Release> for SessionManager<S> {
-    fn handle(&mut self, msg: Release, ctx: &mut Context<Self>) -> Response<Self, Release> {
-        unimplemented!()
+impl<S: Session> Handler<Release> for SockJSManager<S> {
+    fn handle(&mut self, mut msg: Release, ctx: &mut Context<Self>)
+              -> Response<Self, Release>
+    {
+        if let Some(val) = self.sessions.get_mut(&msg.ses.sid) {
+            self.idle.insert(msg.ses.sid.clone());
+            msg.ses.tick = Instant::now();
+            let _ = msg.ses.tx.unbounded_send(SockJSChannel::Released);
+            val.record = Some(msg.ses);
+        }
+        Self::empty()
+    }
+}
+
+impl<S: Session> Handler<SessionMessage> for SockJSManager<S> {
+    fn handle(&mut self, msg: SessionMessage, ctx: &mut Context<Self>)
+              -> Response<Self, SessionMessage>
+    {
+        if let Some(entry) = self.sessions.get_mut(&msg.sid) {
+            entry.addr.send(msg.msg);
+        }
+        Self::empty()
     }
 }

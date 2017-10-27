@@ -1,14 +1,22 @@
-#![allow(dead_code, unused_variables)]
-
 use std;
+use std::collections::VecDeque;
 
 use bytes::Bytes;
-use futures::{Async, Future, Poll};
+use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot::Sender;
+use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 use actix::dev::*;
 
+use session::{Session, Message};
+
+pub enum SockJSChannel {
+    Acquired(UnboundedSender<Message>),
+    Released,
+    Message(String),
+}
+
 /// SockJS Context
-pub struct SockJSContext<A> where A: Actor, A::Context: AsyncContext<A>
+pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
 {
     act: A,
     state: ActorState,
@@ -16,9 +24,12 @@ pub struct SockJSContext<A> where A: Actor, A::Context: AsyncContext<A>
     wait: ActorWaitCell<A>,
     items: ActorItemsCell<A>,
     address: ActorAddressCell<A>,
+    rx: UnboundedReceiver<SockJSChannel>,
+    tx: Option<UnboundedSender<Message>>,
+    buf: VecDeque<Message>,
 }
 
-impl<A> ActorContext<A> for SockJSContext<A> where A: Actor<Context=Self>
+impl<A> ActorContext for SockJSContext<A> where A: Session<Context=Self>
 {
     /// Stop actor execution
     fn stop(&mut self) {
@@ -41,7 +52,7 @@ impl<A> ActorContext<A> for SockJSContext<A> where A: Actor<Context=Self>
     }
 }
 
-impl<A> AsyncContext<A> for SockJSContext<A> where A: Actor<Context=Self>
+impl<A> AsyncContext<A> for SockJSContext<A> where A: Session<Context=Self>
 {
     fn spawn<F>(&mut self, fut: F) -> SpawnHandle
         where F: ActorFuture<Item=(), Error=(), Actor=A> + 'static
@@ -63,13 +74,13 @@ impl<A> AsyncContext<A> for SockJSContext<A> where A: Actor<Context=Self>
     }
 }
 
-impl<A> AsyncContextApi<A> for SockJSContext<A> where A: Actor<Context=Self> {
+impl<A> AsyncContextApi<A> for SockJSContext<A> where A: Session<Context=Self> {
     fn address_cell(&mut self) -> &mut ActorAddressCell<A> {
         &mut self.address
     }
 }
 
-impl<A> SockJSContext<A> where A: Actor<Context=Self>
+impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
     #[doc(hidden)]
     pub fn subscriber<M>(&mut self) -> Box<Subscriber<M>>
@@ -85,45 +96,57 @@ impl<A> SockJSContext<A> where A: Actor<Context=Self>
     }
 
     /// Send message to peer
-    pub fn send(&mut self) {
-        unimplemented!()
+    pub fn send<M>(&mut self, message: M) where M: Into<Message>
+    {
+        let msg = message.into();
+        if let Some(ref mut tx) = self.tx {
+            match tx.unbounded_send(msg) {
+                Ok(()) => return,
+                Err(err) => self.buf.push_back(err.into_inner())
+            }
+        } else {
+            self.buf.push_back(msg);
+            return
+        }
+        self.tx.take();
     }
 
     /// Close session
     pub fn close(&mut self, code: usize, reason: String) {
         unimplemented!()
     }
+
+    /// Check if transport connected to peer
+    pub fn connected(&mut self) -> bool {
+        unimplemented!()
+    }
 }
 
-impl<A> SockJSContext<A> where A: Actor<Context=Self>
+impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
-    pub(crate) fn new(act: A) -> SockJSContext<A>
+    pub(crate) fn start() -> (SyncAddress<A>, UnboundedSender<SockJSChannel>)
     {
-        SockJSContext {
-            act: act,
+        let (tx, rx) = unbounded();
+
+        let mut ctx = SockJSContext {
+            act: A::default(),
             state: ActorState::Started,
             modified: false,
             items: ActorItemsCell::default(),
             address: ActorAddressCell::default(),
             wait: ActorWaitCell::default(),
-        }
-    }
-
-    pub(crate) fn alive(&mut self) -> bool {
-        if self.state == ActorState::Stopped {
-            false
-        } else {
-            self.address.connected() || !self.items.is_empty()
-        }
-    }
-
-    pub(crate) fn replace_actor(&mut self, srv: A) -> A {
-        std::mem::replace(&mut self.act, srv)
+            tx: None,
+            rx: rx,
+            buf: VecDeque::new(),
+        };
+        let addr = ctx.address();
+        Arbiter::handle().spawn(ctx);
+        (addr, tx)
     }
 }
 
 #[doc(hidden)]
-impl<A> Future for SockJSContext<A> where A: Actor<Context=Self>
+impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
 {
     type Item = ();
     type Error = ();
@@ -159,6 +182,36 @@ impl<A> Future for SockJSContext<A> where A: Actor<Context=Self>
 
             // spawned futures and streams
             self.items.poll(&mut self.act, ctx);
+
+            // sockjs channel
+            loop {
+                match self.rx.poll() {
+                    Ok(Async::Ready(Some(msg))) => {
+                        match msg {
+                            SockJSChannel::Acquired(tx) => {
+                                while let Some(msg) = self.buf.pop_front() {
+                                    let _ = tx.unbounded_send(msg);
+                                };
+                                self.tx = Some(tx);
+                                self.act.acquired(ctx);
+                            }
+                            SockJSChannel::Released => self.act.released(ctx),
+                            SockJSChannel::Message(s) => {
+                                let fut = ResponseFuture{
+                                    resp: Handler::handle(
+                                        &mut self.act, Message::Str(s), ctx)};
+                                self.spawn(fut);
+                            }
+                        }
+                        continue
+                    },
+                    Ok(Async::Ready(None)) =>
+                        break,
+                    Ok(Async::NotReady) =>
+                        break,
+                    Err(_) => {},
+                }
+            }
 
             // are we done
             if self.modified {
@@ -204,7 +257,7 @@ impl<A> Future for SockJSContext<A> where A: Actor<Context=Self>
     }
 }
 
-impl<A> std::fmt::Debug for SockJSContext<A> where A: Actor<Context=Self> {
+impl<A> std::fmt::Debug for SockJSContext<A> where A: Session<Context=Self> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "SockJSContext({:?}: actor:{:?}) {{ state: {:?}, connected: {}, items: {} }}",
                self as *const _,
@@ -214,7 +267,7 @@ impl<A> std::fmt::Debug for SockJSContext<A> where A: Actor<Context=Self> {
 }
 
 impl<A> ToEnvelope<A> for SockJSContext<A>
-    where A: Actor<Context=SockJSContext<A>>,
+    where A: Session<Context=SockJSContext<A>>,
 {
     fn pack<M>(msg: M, tx: Option<Sender<Result<M::Item, M::Error>>>) -> Envelope<A>
         where A: Handler<M>,
@@ -223,5 +276,25 @@ impl<A> ToEnvelope<A> for SockJSContext<A>
               M::Error: Send
     {
         RemoteEnvelope::new(msg, tx).into()
+    }
+}
+
+
+struct ResponseFuture<A, M> where A: Actor, M: ResponseType {
+    resp: Response<A, M>
+}
+
+impl<A, M> ActorFuture for ResponseFuture<A, M> where A: Actor, M: ResponseType {
+    type Item = ();
+    type Error = ();
+    type Actor = A;
+
+    fn poll(&mut self, act: &mut A, ctx: &mut A::Context) -> Poll<Self::Item, Self::Error>
+    {
+        match self.resp.poll_response(act, ctx) {
+            Ok(Async::Ready(_)) => Ok(Async::Ready(())),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(_) => Err(()),
+        }
     }
 }

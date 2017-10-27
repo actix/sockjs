@@ -6,16 +6,23 @@ extern crate env_logger;
 
 use std::net;
 use std::str::FromStr;
+use std::time::Duration;
 use actix_web::*;
 use actix::prelude::*;
 
-use sockjs::{Session, SessionManager};
+use sockjs::{Message, Session, SockJSManager};
 
 #[derive(Debug)]
 struct MyApp;
 
 impl Actor for MyApp {
     type Context = sockjs::SockJSContext<Self>;
+
+    fn started(&mut self, ctx: &mut sockjs::SockJSContext<Self>) {
+        ctx.run_later(Duration::new(5, 0), |act, ctx| {
+            ctx.send("TEST".to_owned());
+        });
+    }
 }
 
 impl Default for MyApp {
@@ -24,11 +31,15 @@ impl Default for MyApp {
     }
 }
 
-impl Session for MyApp {
-    type State = ();
-    type Message = ();
+impl Session for MyApp {}
 
-    fn handle(&mut self) {
+impl Handler<Message> for MyApp {
+    fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
+              -> Response<Self, Message>
+    {
+        println!("MESSAGE: {:?}", msg);
+        ctx.send(msg);
+        Self::empty()
     }
 }
 
@@ -39,7 +50,7 @@ fn main() {
 
     let sys = actix::System::new("sockjs-example");
 
-    let sm: SyncAddress<_> = SessionManager::new().start();
+    let sm: SyncAddress<_> = SockJSManager::<MyApp>::new().start();
 
     let http = HttpServer::new(
         Application::default("/")

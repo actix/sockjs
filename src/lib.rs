@@ -34,5 +34,5 @@ mod transports;
 
 pub use application::SockJS;
 pub use context::SockJSContext;
-pub use manager::SessionManager;
-pub use session::{Message, State, Session};
+pub use manager::{SessionManager, SockJSManager};
+pub use session::{Message, Session, SessionState};

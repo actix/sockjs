@@ -13,16 +13,16 @@ use actix_web::*;
 use actix_web::dev::*;
 
 use protocol;
+use transports;
 use context::SockJSContext;
 use manager::{Acquire, Release, SessionManager};
 use session::{Message, Session};
 use utils::{Info, SockjsHeaders};
-use transports::EventSource;
 
 
 pub struct SockJS<A, SM, S=()>
     where A: Actor<Context=SockJSContext<A>> + Session,
-          SM: Actor + Handler<Acquire<A>> + Handler<Release>,
+          SM: SessionManager<A>,
 {
     manager: Rc<SyncAddress<SM>>,
     act: PhantomData<A>,
@@ -37,7 +37,7 @@ pub struct SockJS<A, SM, S=()>
 
 impl<A, SM, S> SockJS<A, SM, S>
     where A: Actor<Context=SockJSContext<A>> + Session,
-          SM: Actor + Handler<Acquire<A>> + Handler<Release>,
+          SM: SessionManager<A>,
           S: 'static,
 {
     pub fn new(manager: SyncAddress<SM>) -> Self
@@ -78,7 +78,7 @@ enum RouteType {
 
 impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
     where A: Actor<Context=SockJSContext<A>> + Session,
-          SM: Actor + Handler<Acquire<A>> + Handler<Release>,
+          SM: SessionManager<A>,
           S: 'static
 {
     fn handle(&self, req: &mut HttpRequest, payload: Payload, state: Rc<S>) -> Task {
@@ -139,10 +139,25 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                         req.set_match_info(params);
                     }
 
-                    let mut ctx = HttpContext::new(self.manager.clone());
-                    return match EventSource::request(req, payload, &mut ctx) {
-                        Ok(reply) => reply.into(ctx),
-                        Err(err) => Task::reply(err),
+                    let tr = req.match_info().get("transport").unwrap().to_owned();
+                    if tr == "eventsource" {
+                        let mut ctx = HttpContext::new(self.manager.clone());
+                        return match transports::EventSource::<A, _>
+                            ::request(req, payload, &mut ctx)
+                        {
+                            Ok(reply) => reply.into(ctx),
+                            Err(err) => Task::reply(err),
+                        }
+                    } else if tr == "xhrsend" {
+                        let mut ctx = HttpContext::new(self.manager.clone());
+                        return match transports::XhrSend::<A, _>
+                            ::request(req, payload, &mut ctx)
+                        {
+                            Ok(reply) => reply.into(ctx),
+                            Err(err) => Task::reply(err),
+                        }
+                    } else {
+                        return Task::reply(httpcodes::HTTPNotFound)
                     }
                 },
                 _ => ()
