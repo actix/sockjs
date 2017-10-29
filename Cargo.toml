@@ -20,12 +20,11 @@ path = "src/lib.rs"
 [dependencies]
 time = "0.1"
 http = "0.1"
-slab = "0.4"
-sha1 = "0.2"
-rand = "0.3"
-url = "1.5"
 md5 = "0.3"
-route-recognizer = "0.1"
+rand = "0.3"
+regex = "0.2"
+lazy_static = "0.2"
+percent-encoding = "1.0"
 
 # serde
 serde = "1.0"
@@ -35,13 +34,9 @@ serde_derive = "1.0"
 # tokio
 bytes = "0.4"
 futures = "0.1"
-tokio-core = "0.1"
-tokio-io = "0.1"
-tokio-proto = "0.1"
 
 # other
 log = "0.3"
-env_logger = "*"
 
 [dependencies.actix]
 #version = ">=0.3.1"
@@ -57,3 +52,6 @@ path = "../actix-web"
 lto = true
 opt-level = 3
 debug = true
+
+[dev-dependencies]
+env_logger = "0.4"

@@ -10,35 +10,56 @@ use std::time::Duration;
 use actix_web::*;
 use actix::prelude::*;
 
-use sockjs::{Message, Session, SockJSManager};
+use sockjs::{Message, Session, CloseCode, SockJSManager};
 
 #[derive(Debug)]
-struct MyApp;
+struct Echo;
 
-impl Actor for MyApp {
+impl Actor for Echo {
     type Context = sockjs::SockJSContext<Self>;
+}
 
-    fn started(&mut self, ctx: &mut sockjs::SockJSContext<Self>) {
-        ctx.run_later(Duration::new(5, 0), |act, ctx| {
-            ctx.send("TEST".to_owned());
-        });
+impl Default for Echo {
+    fn default() -> Echo {
+        Echo
     }
 }
 
-impl Default for MyApp {
-    fn default() -> MyApp {
-        MyApp
-    }
-}
+impl Session for Echo {}
 
-impl Session for MyApp {}
-
-impl Handler<Message> for MyApp {
+impl Handler<Message> for Echo {
     fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
               -> Response<Self, Message>
     {
         println!("MESSAGE: {:?}", msg);
         ctx.send(msg);
+        Self::empty()
+    }
+}
+
+#[derive(Debug)]
+struct Close;
+
+impl Actor for Close {
+    type Context = sockjs::SockJSContext<Self>;
+
+    fn started(&mut self, ctx: &mut sockjs::SockJSContext<Self>) {
+        ctx.close(CloseCode::GoAway)
+    }
+}
+
+impl Default for Close {
+    fn default() -> Close {
+        Close
+    }
+}
+
+impl Session for Close {}
+
+impl Handler<Message> for Close {
+    fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
+              -> Response<Self, Message>
+    {
         Self::empty()
     }
 }
@@ -50,13 +71,23 @@ fn main() {
 
     let sys = actix::System::new("sockjs-example");
 
-    let sm: SyncAddress<_> = SockJSManager::<MyApp>::new().start();
+    let sm: SyncAddress<_> = SockJSManager::<Echo>::new().start();
+    let cl: SyncAddress<_> = SockJSManager::<Close>::new().start();
 
     let http = HttpServer::new(
         Application::default("/")
             .middleware(Logger::new(None))
-            .route_handler("/", sockjs::SockJS::<MyApp, _>::new(sm)))
-        .serve::<_, ()>("127.0.0.1:9080").unwrap();
+            .route_handler(
+                "/echo", sockjs::SockJS::<Echo, _>::new(sm.clone()).maxsize(4096))
+            .route_handler(
+                "/close", sockjs::SockJS::<Close, _>::new(cl))
+            .route_handler(
+                "/disabled_websocket_echo",
+                sockjs::SockJS::<Echo, _>::new(sm.clone()).disable_transports(vec!["websocket"]))
+            .route_handler(
+                "/cookie_needed_echo",
+                sockjs::SockJS::<Echo, _>::new(sm).cookie_needed(true)))
+        .serve::<_, ()>("127.0.0.1:8081").unwrap();
 
     let _ = sys.run();
 }

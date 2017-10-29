@@ -1,20 +1,16 @@
-use std::io;
-use std::time::Duration;
 use std::marker::PhantomData;
 
 use actix::*;
 use actix_web::*;
-use actix_web::dev::*;
 use bytes::BytesMut;
-use http::header::{self, ACCESS_CONTROL_ALLOW_METHODS};
+use serde_json;
+use http::header::ACCESS_CONTROL_ALLOW_METHODS;
 
-use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
-use context::SockJSContext;
-use session::{Message, Session, SessionState};
-use manager::{Acquire, Release, Record, SessionManager, SessionMessage};
+use session::{Message, Session};
+use manager::{SessionManager, SessionMessage};
 
-use super::{MAXSIZE, Transport, SendResult};
+use super::MAXSIZE;
 
 
 pub struct XhrSend<S, SM>
@@ -24,6 +20,7 @@ pub struct XhrSend<S, SM>
     sm: PhantomData<SM>,
     buf: BytesMut,
     sid: Option<String>,
+    resp: Option<HttpResponse>,
 }
 
 // Http actor implementation
@@ -50,8 +47,8 @@ impl<S, SM> Route for XhrSend<S, SM>
                 httpcodes::HTTPNoContent
                     .builder()
                     .content_type("application/jsonscript; charset=UTF-8")
-                    .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, GET")
-                    .sockjs_cache_control()
+                    .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
+                    .sockjs_cache_headers()
                     .sockjs_cors_headers(req.headers())
                     .sockjs_session_cookie(&req)
                     .finish())
@@ -64,11 +61,10 @@ impl<S, SM> Route for XhrSend<S, SM>
             let resp = httpcodes::HTTPNoContent
                 .builder()
                 .content_type("text/plain; charset=UTF-8")
-                .sockjs_cache_control()
+                .sockjs_no_cache()
                 .sockjs_cors_headers(req.headers())
                 .sockjs_session_cookie(&req)
                 .finish()?;
-            ctx.start(resp);
             ctx.add_stream(payload);
 
             Reply::async(XhrSend{
@@ -76,6 +72,7 @@ impl<S, SM> Route for XhrSend<S, SM>
                 sm: PhantomData,
                 buf: BytesMut::new(),
                 sid: Some(req.match_info().get("session").unwrap().to_owned()),
+                resp: Some(resp),
             })
         }
     }
@@ -86,28 +83,62 @@ impl<S, SM> StreamHandler<PayloadItem, PayloadError> for XhrSend<S, SM>
 {
     fn finished(&mut self, ctx: &mut Self::Context) {
         if let Some(sid) = self.sid.take() {
-            let s = String::from_utf8_lossy(&self.buf).into_owned();
-            ctx.state().send(
-                SessionMessage {
-                    sid: sid,
-                    msg: Message::Str(s)
-                });
+            // empty message
+            if self.buf.is_empty() {
+                ctx.start(httpcodes::HTTPInternalServerError.with_body("Payload expected."));
+                ctx.write_eof();
+                return
+            } else if self.buf == "[]" {
+                ctx.start(self.resp.take().unwrap());
+                ctx.write_eof();
+                return
+            }
+            // deserialize json
+            let mut msgs: Vec<String> = match serde_json::from_slice(&self.buf) {
+                Ok(msgs) => msgs,
+                Err(_) => {
+                    ctx.start(
+                        httpcodes::HTTPInternalServerError.with_body("Broken JSON encoding."));
+                    ctx.write_eof();
+                    return
+                }
+            };
+            let msg = if msgs.len() == 1 {
+                Message::Str(msgs.pop().unwrap())
+            } else {
+                msgs.into()
+            };
+
+            ctx.state().call(
+                self, SessionMessage {
+                    sid: sid.clone(),
+                    msg: msg})
+                .map(|res, act, ctx| {
+                    match res {
+                        Ok(_) => ctx.start(act.resp.take().unwrap()),
+                        Err(_) => ctx.start(httpcodes::HTTPNotFound),
+                    }
+                    ctx.write_eof();
+                })
+                .map_err(|_, _, ctx| {
+                    ctx.start(httpcodes::HTTPNotFound);
+                    ctx.write_eof();
+                })
+                .wait(ctx);
         }
-        ctx.write_eof()
     }
 }
 
 impl<S, SM> Handler<PayloadItem, PayloadError> for XhrSend<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    fn error(&mut self, err: PayloadError, ctx: &mut HttpContext<Self>) {
+    fn error(&mut self, _: PayloadError, ctx: &mut HttpContext<Self>) {
         ctx.terminate();
     }
 
     fn handle(&mut self, msg: PayloadItem, ctx: &mut HttpContext<Self>)
               -> Response<Self, PayloadItem>
     {
-        println!("msg {:?}", msg.0);
         let size = self.buf.len() + msg.0.len();
         if size >= MAXSIZE {
             ctx.start(

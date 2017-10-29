@@ -4,47 +4,73 @@ use std::marker::PhantomData;
 use actix::*;
 use actix_web::*;
 use http::header;
+use serde_json;
 
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
-use context::SockJSContext;
-use session::{Message, Session, SessionState};
-use manager::{Acquire, Release, Record, SessionManager};
+use session::Session;
+use manager::{Release, Record, SessionManager};
 
 use super::{MAXSIZE, Transport, SendResult};
 
 
 pub struct EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release>,
+    where S: Session, SM: SessionManager<S>,
 {
+    s: PhantomData<S>,
     sm: PhantomData<SM>,
     size: usize,
     rec: Option<Record>,
-    session: S,
+    maxsize: usize,
 }
 
 impl<S, SM> EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release>
+    where S: Session, SM: SessionManager<S>,
 {
     fn hb(&self, ctx: &mut HttpContext<Self>) {
         ctx.run_later(Duration::new(5, 0), |act, ctx| {
-            act.send(ctx, Frame::Heartbeat);
+            act.send_heartbeat(ctx);
             act.hb(ctx);
         });
+    }
+
+    pub fn handle(req: &mut HttpRequest,ctx: &mut HttpContext<Self>, maxsize: usize)
+                  -> RouteResult<Self>
+    {
+        let _ = req.load_cookies();
+        ctx.start(httpcodes::HTTPOk
+                  .builder()
+                  .header(header::CONTENT_TYPE, "text/event-stream")
+                  .force_close()
+                  .sockjs_no_cache()
+                  .sockjs_session_cookie(req)
+                  .body(Body::Streaming));
+        ctx.write("\r\n");
+
+        // init transport, but aftre prelude only
+        let session = req.match_info().get("session").unwrap().to_owned();
+        ctx.drain().map(move |_, _, ctx| {
+            ctx.run_later(Duration::new(0, 800000), move |act, ctx| {
+                act.hb(ctx);
+                act.init_transport(session, ctx);
+            });
+        }).wait(ctx);
+
+        Reply::async(
+            EventSource{s: PhantomData,
+                        sm: PhantomData,
+                        size: 0, rec: None, maxsize: maxsize})
     }
 }
 
 // Http actor implementation
 impl<S, SM> Actor for EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release>,
-          SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
 {
     type Context = HttpContext<Self>;
 
     fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
+        println!("STOPPING, {:?}", self.rec.is_some());
         if let Some(rec) = self.rec.take() {
             ctx.state().send(Release{ses: rec});
         }
@@ -53,117 +79,93 @@ impl<S, SM> Actor for EventSource<S, SM>
 }
 
 // Transport implementation
-impl<S, SM> Transport for EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release>,
+impl<S, SM> Transport<S, SM> for EventSource<S, SM>
+    where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame) -> SendResult {
+    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, rec: &mut Record) -> SendResult {
         self.size += match msg {
             Frame::Heartbeat => {
                 ctx.write("data: h\r\n\r\n");
                 11
             },
             Frame::Message(s) => {
-                let blob = format!("data: a[{:?}]\r\n\r\n", s);
+                let blob = serde_json::to_string(&s).unwrap();
                 let size = blob.len();
+                ctx.write("data: a[");
                 ctx.write(blob);
-                size
+                ctx.write("]\r\n\r\n");
+                size + 13
+            }
+            Frame::MessageVec(s) => {
+                let size = s.len();
+                ctx.write("data: a");
+                ctx.write(s);
+                ctx.write("\r\n\r\n");
+                size + 11
+            }
+            Frame::MessageBlob(_) => {
+                unimplemented!()
             }
             Frame::Open => {
                 ctx.write("data: o\r\n\r\n");
                 11
             },
             Frame::Close(code) => {
+                rec.close();
                 let blob = format!("data: c[{}, {:?}]\r\n\r\n", code.num(), code.reason());
                 let size = blob.len();
                 ctx.write(blob);
                 size
             }
-            _ => 0,
         };
 
-        if self.size > MAXSIZE { SendResult::Stop } else { SendResult::Continue }
+        if self.size > self.maxsize {
+            ctx.write_eof();
+            ctx.stop();
+            SendResult::Stop
+        } else {
+            SendResult::Continue
+        }
+    }
+
+    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode) {
+        let blob = format!("data: c[{}, {:?}]\r\n\r\n", code.num(), code.reason());
+        ctx.write(blob);
+    }
+
+    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>) {
+        ctx.write("data: h\r\n\r\n");
+    }
+
+    fn set_session_record(&mut self, rec: Record) {
+        self.rec = Some(rec)
     }
 }
 
 impl<S, SM> Route for EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release>,
+    where S: Session, SM: SessionManager<S>,
 {
     type State = SyncAddress<SM>;
 
-    fn request(req: &mut HttpRequest, payload: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self>
-    {
-        ctx.start(httpcodes::HTTPOk
-                  .builder()
-                  .header(header::CONTENT_TYPE, "text/event-stream")
-                  .force_close()
-                  .sockjs_cache_control()
-                  .sockjs_session_cookie(req)
-                  .body(Body::Streaming));
-        ctx.write("\r\n");
-
-        let act = EventSource{sm: PhantomData,
-                              size: 0,
-                              rec: None,
-                              session: S::default()};
-        let session = req.match_info().get("session").unwrap().to_owned();
-
-        // acquire session
-        ctx.state().call(&act, Acquire::new(session))
-            .map(|res, act, ctx| {
-                match res {
-                    Ok(mut rec) => {
-                        if rec.0.state == SessionState::New {
-                            act.send(ctx, Frame::Open);
-                        }
-                        rec.0.state = SessionState::Running;
-
-                        while let Some(msg) = rec.0.messages.pop_front() {
-                            match msg {
-                                Message::Str(s) => act.send(ctx, Frame::Message(s)),
-                                Message::Bin(b) => act.send(ctx, Frame::MessageBlob(b)),
-                            };
-                        }
-                        act.rec = Some(rec.0);
-                        ctx.add_stream(rec.1);
-                        act.hb(ctx);
-                    },
-                    Err(err) => {
-                        act.send(ctx, err.into());
-                        ctx.write_eof();
-                    }
-                }
-            })
-        // session manager is dead?
-            .map_err(|_, act, ctx| {
-                act.send(ctx, Frame::Close(CloseCode::InternalError));
-                ctx.stop();
-            })
-            .wait(ctx);
-
-        Reply::async(act)
+    fn request(req: &mut HttpRequest, _: Payload, ctx: &mut HttpContext<Self>)
+               -> RouteResult<Self> {
+        EventSource::handle(req, ctx, MAXSIZE)
     }
 }
 
-impl<S, SM> StreamHandler<Message> for EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release> {}
+impl<S, SM> StreamHandler<Frame> for EventSource<S, SM>
+    where S: Session, SM: SessionManager<S> {}
 
-impl<S, SM> Handler<Message> for EventSource<S, SM>
-    where S: Session,
-          SM: Actor + Handler<Acquire> + Handler<Release>,
+impl<S, SM> Handler<Frame> for EventSource<S, SM>
+    where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Message, ctx: &mut HttpContext<Self>) -> Response<Self, Message> {
-        if ctx.connected() {
-            match msg {
-                Message::Str(s) => self.send(ctx, Frame::Message(s)),
-                Message::Bin(b) => self.send(ctx, Frame::MessageBlob(b)),
-            };
+    fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
+        if let Some(mut rec) = self.rec.take() {
+            self.send(ctx, msg, &mut rec);
+            self.rec = Some(rec);
         } else {
             if let Some(ref mut rec) = self.rec {
-                rec.messages.push_back(msg);
+                rec.buffer.push_back(msg);
             };
         }
         Self::empty()

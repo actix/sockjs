@@ -1,19 +1,20 @@
 use std::fmt::Debug;
 use bytes::Bytes;
+use serde_json;
 use actix::*;
+
+use protocol::Frame;
 use context::SockJSContext;
 
 #[derive(PartialEq, Debug)]
 pub enum SessionState {
     /// Newly create session
     New,
-    /// Session is running, but transport is not connected
-    Idle,
     /// Transport is connected
     Running,
-    /// Closing session
-    Closing,
-    /// Session is closed, transport is dropped.
+    /// Session interrupted
+    Interrupted,
+    /// Session is closed
     Closed,
 }
 
@@ -21,6 +22,7 @@ pub enum SessionState {
 pub enum Message {
     Str(String),
     Bin(Bytes),
+    Strs(Vec<String>),
 }
 
 impl ResponseType for Message {
@@ -28,15 +30,19 @@ impl ResponseType for Message {
     type Error = ();
 }
 
-impl From<String> for Message {
-    fn from(s: String) -> Message {
-        Message::Str(s)
+impl From<Message> for Frame {
+    fn from(m: Message) -> Frame {
+        match m {
+            Message::Str(s) => Frame::Message(s),
+            Message::Bin(s) => Frame::MessageBlob(s),
+            Message::Strs(s) => Frame::MessageVec(serde_json::to_string(&s).unwrap()),
+        }
     }
 }
 
-impl From<Bytes> for Message {
-    fn from(s: Bytes) -> Message {
-        Message::Bin(s)
+impl From<Vec<String>> for Message {
+    fn from(msgs: Vec<String>) -> Message {
+        Message::Strs(msgs)
     }
 }
 

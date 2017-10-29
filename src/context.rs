@@ -1,16 +1,17 @@
 use std;
 use std::collections::VecDeque;
 
-use bytes::Bytes;
+use actix::dev::*;
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot::Sender;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
-use actix::dev::*;
 
+use protocol::{CloseCode, Frame};
 use session::{Session, Message};
 
+#[derive(Debug)]
 pub enum SockJSChannel {
-    Acquired(UnboundedSender<Message>),
+    Acquired(UnboundedSender<Frame>),
     Released,
     Message(String),
 }
@@ -25,8 +26,8 @@ pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
     items: ActorItemsCell<A>,
     address: ActorAddressCell<A>,
     rx: UnboundedReceiver<SockJSChannel>,
-    tx: Option<UnboundedSender<Message>>,
-    buf: VecDeque<Message>,
+    tx: Option<UnboundedSender<Frame>>,
+    buf: VecDeque<Frame>,
 }
 
 impl<A> ActorContext for SockJSContext<A> where A: Session<Context=Self>
@@ -96,7 +97,7 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
     }
 
     /// Send message to peer
-    pub fn send<M>(&mut self, message: M) where M: Into<Message>
+    pub fn send<M>(&mut self, message: M) where M: Into<Frame>
     {
         let msg = message.into();
         if let Some(ref mut tx) = self.tx {
@@ -112,8 +113,16 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
     }
 
     /// Close session
-    pub fn close(&mut self, code: usize, reason: String) {
-        unimplemented!()
+    pub fn close(&mut self, code: CloseCode) {
+        let frm = Frame::Close(code);
+        if let Some(ref mut tx) = self.tx {
+            match tx.unbounded_send(frm) {
+                Ok(()) => return,
+                Err(err) => self.buf.push_back(err.into_inner())
+            }
+        } else {
+            self.buf.push_back(frm);
+        }
     }
 
     /// Check if transport connected to peer

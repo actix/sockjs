@@ -1,7 +1,6 @@
-use std::time::Duration;
-use actix_web::{Body, Cookie, HttpRequest, HttpResponse, HttpResponseBuilder};
+use actix_web::{Cookie, HttpRequest, HttpResponse, HttpResponseBuilder};
 use http::Error;
-use http::header::{self, HeaderMap, HeaderValue};
+use http::header::HeaderMap;
 use http::header::{EXPIRES, ORIGIN, CACHE_CONTROL,
                    ACCESS_CONTROL_ALLOW_ORIGIN,
                    ACCESS_CONTROL_ALLOW_HEADERS,
@@ -44,7 +43,7 @@ pub(crate) trait SockjsHeaders {
 
     fn sockjs_allow_methods(&mut self) -> &mut Self;
 
-    fn sockjs_cache_control(&mut self) -> &mut Self;
+    fn sockjs_no_cache(&mut self) -> &mut Self;
 
     fn sockjs_cache_headers(&mut self) -> &mut Self;
 
@@ -63,11 +62,12 @@ impl SockjsHeaders for HttpResponseBuilder {
     }
 
     fn sockjs_session_cookie(&mut self, req: &HttpRequest) -> &mut Self {
-        if req.cookie("JSESSIONID").is_none() {
-            self.cookie(Cookie::build("JSESSIONID", "dummy")
-                        .path("/")
-                        .finish());
-        }
+        let builder = if let Some(cookie) = req.cookie("JSESSIONID") {
+            Cookie::build("JSESSIONID", cookie.value().to_owned())
+        } else {
+            Cookie::build("JSESSIONID", "dummy")
+        };
+        self.cookie(builder.path("/").finish());
         self
     }
 
@@ -75,7 +75,7 @@ impl SockjsHeaders for HttpResponseBuilder {
         self.header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, GET")
     }
 
-    fn sockjs_cache_control(&mut self) -> &mut Self {
+    fn sockjs_no_cache(&mut self) -> &mut Self {
         self.header(CACHE_CONTROL, CACHE_CONTROL_VAL)
     }
 

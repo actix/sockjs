@@ -1,10 +1,9 @@
-#![allow(dead_code, unused_variables)]
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Instant, Duration};
-use std::marker::PhantomData;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
 use actix::*;
+use protocol::Frame;
 use context::{SockJSContext, SockJSChannel};
 use session::{Message, Session, SessionState, SessionError};
 
@@ -25,7 +24,7 @@ impl Acquire {
 }
 
 impl ResponseType for Acquire {
-    type Item = (Record, UnboundedReceiver<Message>);
+    type Item = (Record, UnboundedReceiver<Frame>);
     type Error = SessionError;
 }
 
@@ -40,6 +39,7 @@ impl ResponseType for Release {
 }
 
 /// Session message
+#[derive(Debug)]
 pub struct SessionMessage {
     pub sid: String,
     pub msg: Message,
@@ -51,13 +51,14 @@ impl ResponseType for SessionMessage {
 }
 
 /// Session record
+#[derive(Debug)]
 pub struct Record {
     /// Session id
     sid: String,
     /// Session state
     pub state: SessionState,
     /// Peer messages, buffer for peer messages when transport is not connected
-    pub messages: VecDeque<Message>,
+    pub buffer: VecDeque<Frame>,
     /// heartbeat
     tick: Instant,
     /// Channel to context
@@ -69,10 +70,14 @@ impl Record {
         Record {
             sid: id,
             state: SessionState::New,
-            messages: VecDeque::new(),
+            buffer: VecDeque::new(),
             tick: Instant::now(),
             tx: tx,
         }
+    }
+
+    pub fn close(&mut self) {
+        self.state = SessionState::Closed;
     }
 }
 
@@ -81,11 +86,11 @@ struct Entry<S: Session> {
     record: Option<Record>,
 }
 
-impl<S: Session> Entry<S> {
+/*impl<S: Session> Entry<S> {
     fn is_acquired(&self) -> bool {
         self.record.is_none()
     }
-}
+}*/
 
 /// Session manager
 pub struct SockJSManager<S: Session> {
@@ -119,7 +124,7 @@ impl<S: Session> Actor for SockJSManager<S> {
 }
 
 impl<S: Session> Handler<Acquire> for SockJSManager<S> {
-    fn handle(&mut self, msg: Acquire, ctx: &mut Context<Self>) -> Response<Self, Acquire>
+    fn handle(&mut self, msg: Acquire, _: &mut Context<Self>) -> Response<Self, Acquire>
     {
         if let Some(val) = self.sessions.get_mut(&msg.sid) {
             if let Some(rec) = val.record.take() {
@@ -141,7 +146,7 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
 }
 
 impl<S: Session> Handler<Release> for SockJSManager<S> {
-    fn handle(&mut self, mut msg: Release, ctx: &mut Context<Self>)
+    fn handle(&mut self, mut msg: Release, _: &mut Context<Self>)
               -> Response<Self, Release>
     {
         if let Some(val) = self.sessions.get_mut(&msg.ses.sid) {
@@ -155,12 +160,14 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
 }
 
 impl<S: Session> Handler<SessionMessage> for SockJSManager<S> {
-    fn handle(&mut self, msg: SessionMessage, ctx: &mut Context<Self>)
+    fn handle(&mut self, msg: SessionMessage, _: &mut Context<Self>)
               -> Response<Self, SessionMessage>
     {
         if let Some(entry) = self.sessions.get_mut(&msg.sid) {
             entry.addr.send(msg.msg);
+            Self::empty()
+        } else {
+            Self::reply_error(())
         }
-        Self::empty()
     }
 }

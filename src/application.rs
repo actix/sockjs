@@ -1,22 +1,19 @@
-#![allow(dead_code, unused_variables)]
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::collections::HashSet;
 
 use md5;
 use rand::{self, Rng, ThreadRng};
-use bytes::Bytes;
-use http::Method;
-use http::header::{self, HeaderValue, CONTENT_TYPE};
+use http::{header, Method};
 use actix::dev::*;
-use actix_web::*;
 use actix_web::dev::*;
 
 use protocol;
 use transports;
 use context::SockJSContext;
-use manager::{Acquire, Release, SessionManager};
-use session::{Message, Session};
+use session::Session;
+use manager::SessionManager;
 use utils::{Info, SockjsHeaders};
 
 
@@ -32,7 +29,9 @@ pub struct SockJS<A, SM, S=()>
     router: RouteRecognizer<RouteType>,
     iframe_html: Rc<String>,
     iframe_html_md5: String,
-    // factory: RouteFactory<A, S>,
+    disabled_transports: HashSet<String>,
+    max_size: usize,
+    cookie_needed: bool,
 }
 
 impl<A, SM, S> SockJS<A, SM, S>
@@ -63,7 +62,33 @@ impl<A, SM, S> SockJS<A, SM, S>
             router: RouteRecognizer::new("/", routes),
             iframe_html: Rc::new(html),
             iframe_html_md5: format!("{:x}", digest),
+            disabled_transports: HashSet::new(),
+            max_size: transports::MAXSIZE,
+            cookie_needed: false,
         }
+    }
+
+    pub fn disable_transports<T, I>(mut self, disabled: I) -> Self
+        where T: Into<String>, I: IntoIterator<Item = T>
+    {
+        for i in disabled {
+            self.disabled_transports.insert(i.into());
+        }
+        self
+    }
+
+    /// Set max size for single streaming request (EventSource, XhrStreamimng).
+    pub fn maxsize(mut self, size: usize) -> Self
+    {
+        self.max_size = size;
+        self
+    }
+
+    /// Set cookie needed param
+    pub fn cookie_needed(mut self, val: bool) -> Self
+    {
+        self.cookie_needed = val;
+        self
     }
 }
 
@@ -81,7 +106,8 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
           SM: SessionManager<A>,
           S: 'static
 {
-    fn handle(&self, req: &mut HttpRequest, payload: Payload, state: Rc<S>) -> Task {
+    fn handle(&self, req: &mut HttpRequest, payload: Payload, _: Rc<S>) -> Task {
+        println!("PATH: {:?}", req.path());
         if let Some((params, route)) = self.router.recognize(req.path()) {
             match *route {
                 RouteType::Greeting => {
@@ -97,17 +123,19 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                             httpcodes::HTTPOk
                                 .builder()
                                 .content_type("application/json;charset=UTF-8")
-                                .sockjs_cache_control()
+                                .sockjs_no_cache()
                                 .sockjs_cors_headers(req.headers())
                                 .json_body(Info::new(
-                                    self.rng.borrow_mut().gen::<u32>(), true, true)))
+                                    self.rng.borrow_mut().gen::<u32>(),
+                                    !self.disabled_transports.contains("websocket"),
+                                    self.cookie_needed)))
                     } else if *req.method() == Method::OPTIONS {
                         let _ = req.load_cookies();
                         Task::reply(
                             httpcodes::HTTPNoContent
                                 .builder()
                                 .content_type("application/json;charset=UTF-8")
-                                .sockjs_cache_control()
+                                .sockjs_cache_headers()
                                 .sockjs_allow_methods()
                                 .sockjs_cors_headers(req.headers())
                                 .sockjs_session_cookie(&req)
@@ -140,31 +168,65 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                     }
 
                     let tr = req.match_info().get("transport").unwrap().to_owned();
-                    if tr == "eventsource" {
-                        let mut ctx = HttpContext::new(self.manager.clone());
-                        return match transports::EventSource::<A, _>
-                            ::request(req, payload, &mut ctx)
-                        {
-                            Ok(reply) => reply.into(ctx),
-                            Err(err) => Task::reply(err),
-                        }
-                    } else if tr == "xhrsend" {
-                        let mut ctx = HttpContext::new(self.manager.clone());
-                        return match transports::XhrSend::<A, _>
-                            ::request(req, payload, &mut ctx)
-                        {
-                            Ok(reply) => reply.into(ctx),
-                            Err(err) => Task::reply(err),
-                        }
-                    } else {
+                    if self.disabled_transports.contains(&tr) {
                         return Task::reply(httpcodes::HTTPNotFound)
+                    }
+
+                    // check valid session and server params
+                    {
+                        let sid = req.match_info().get("session").unwrap();
+                        let server = req.match_info().get("server").unwrap();
+                        if sid.is_empty() || sid.contains('.') || server.contains('.') {
+                            return Task::reply(httpcodes::HTTPNotFound)
+                        }
+                    }
+
+                    let res = {
+                        if tr == "xhr_streaming" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::XhrStreaming::<A, _>
+                                ::handle(req, &mut ctx, self.max_size)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "xhr" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::Xhr::<A, _>::request(req, payload, &mut ctx)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "xhr_send" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::XhrSend::<A, _>::request(req, payload, &mut ctx)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "htmlfile" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::HTMLFile::<A, _>
+                                ::handle(req, &mut ctx, self.max_size)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "eventsource" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::EventSource::<A, _>
+                                ::handle(req, &mut ctx, self.max_size)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "jsonp" {
+                            println!("REQ: {:?}", req);
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::JSONPolling::<A, _>::request(req, payload, &mut ctx)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "jsonp_send" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::JSONPollingSend::<A, _>::request(req, payload, &mut ctx)
+                                .map(|r| r.into(ctx))
+                        } else {
+                            return Task::reply(httpcodes::HTTPNotFound)
+                        }
+                    };
+                    match res {
+                        Ok(resp) => return resp,
+                        Err(err) => return Task::reply(err),
                     }
                 },
                 _ => ()
             }
         }
-
-        return Task::reply(httpcodes::HTTPMethodNotAllowed)
+        return Task::reply(httpcodes::HTTPNotFound)
     }
 
     fn set_prefix(&mut self, prefix: String) {

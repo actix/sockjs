@@ -1,23 +1,44 @@
-#![allow(dead_code, unused_variables)]
-use std::fmt::Debug;
 use bytes::Bytes;
+use actix::ResponseType;
 use session::SessionError;
 
-pub enum Message {
-    Open,
-    Msg,
-    Close,
-    Closed,
-}
-
+#[derive(Debug)]
 pub enum Frame {
     Open,
     Close(CloseCode),
     Message(String),
     MessageBlob(Bytes),
+    MessageVec(String),
     Heartbeat,
 }
 
+impl Frame {
+    pub fn is_msg(&self) -> bool {
+        match *self {
+            Frame::Message(_) => true,
+            _ => false,
+        }
+    }
+}
+
+impl ResponseType for Frame {
+    type Item = ();
+    type Error = ();
+}
+
+impl From<String> for Frame {
+    fn from(s: String) -> Frame {
+        Frame::Message(s)
+    }
+}
+
+impl From<Bytes> for Frame {
+    fn from(s: Bytes) -> Frame {
+        Frame::MessageBlob(s)
+    }
+}
+
+#[derive(Debug)]
 pub enum CloseCode {
     Interrupted,
     GoAway,
@@ -52,6 +73,17 @@ impl From<SessionError> for Frame {
             SessionError::Interrupted => Frame::Close(CloseCode::Interrupted),
             SessionError::Closing => Frame::Close(CloseCode::GoAway),
             SessionError::InternalError => Frame::Close(CloseCode::InternalError),
+        }
+    }
+}
+
+impl From<SessionError> for CloseCode {
+    fn from(err: SessionError) -> CloseCode {
+        match err {
+            SessionError::Acquired => CloseCode::Acquired,
+            SessionError::Interrupted => CloseCode::Interrupted,
+            SessionError::Closing => CloseCode::GoAway,
+            SessionError::InternalError => CloseCode::InternalError,
         }
     }
 }
