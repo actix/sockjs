@@ -54,7 +54,7 @@ impl ResponseType for SessionMessage {
 #[derive(Debug)]
 pub struct Record {
     /// Session id
-    sid: String,
+    pub sid: String,
     /// Session state
     pub state: SessionState,
     /// Peer messages, buffer for peer messages when transport is not connected

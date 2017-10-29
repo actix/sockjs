@@ -25,16 +25,13 @@ pub struct XhrSend<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for XhrSend<S, SM>
-    where S: Session,
-          SM: SessionManager<S>,
-          SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self>;
 }
 
 impl<S, SM> Route for XhrSend<S, SM>
-    where S: Session,
-          SM: SessionManager<S>,
+    where S: Session, SM: SessionManager<S>,
 {
     type State = SyncAddress<SM>;
 

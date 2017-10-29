@@ -182,7 +182,11 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                     }
 
                     let res = {
-                        if tr == "xhr_streaming" {
+                        if tr == "websocket" {
+                            let mut ctx = HttpContext::new(self.manager.clone());
+                            transports::Websocket::<A, _>::request(req, payload, &mut ctx)
+                                .map(|r| r.into(ctx))
+                        } else if tr == "xhr_streaming" {
                             let mut ctx = HttpContext::new(self.manager.clone());
                             transports::XhrStreaming::<A, _>
                                 ::handle(req, &mut ctx, self.max_size)

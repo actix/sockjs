@@ -26,7 +26,7 @@ pub struct JSONPolling<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self>;
 
@@ -40,7 +40,7 @@ impl<S, SM> Actor for JSONPolling<S, SM>
 }
 
 impl<S, SM>  JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     fn write(&self, s: &str, ctx: &mut HttpContext<Self>) {
         ctx.write(format!("/**/{}({});\r\n",

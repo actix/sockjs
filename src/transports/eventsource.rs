@@ -65,7 +65,7 @@ impl<S, SM> EventSource<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for EventSource<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self>;
 
@@ -112,10 +112,10 @@ impl<S, SM> Transport<S, SM> for EventSource<S, SM>
             },
             Frame::Close(code) => {
                 rec.close();
-                let blob = format!("data: c[{}, {:?}]\r\n\r\n", code.num(), code.reason());
-                let size = blob.len();
-                ctx.write(blob);
-                size
+                ctx.write(format!("data: c[{}, {:?}]\r\n\r\n", code.num(), code.reason()));
+                ctx.write_eof();
+                ctx.stop();
+                return SendResult::Stop
             }
         };
 

@@ -112,7 +112,7 @@ impl<S, SM> HTMLFile<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for HTMLFile<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self>;
 
@@ -151,6 +151,9 @@ impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
                 rec.close();
                 let blob = format!("c[{},{:?}]", code.num(), code.reason());
                 self.write(&blob, ctx);
+                ctx.write_eof();
+                ctx.stop();
+                return SendResult::Stop
             }
         };
 

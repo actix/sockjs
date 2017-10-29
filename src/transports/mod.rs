@@ -13,12 +13,14 @@ mod xhrstreaming;
 mod eventsource;
 mod jsonp;
 mod htmlfile;
+mod websocket;
 
 pub use self::xhr::Xhr;
 pub use self::xhrsend::XhrSend;
 pub use self::xhrstreaming::XhrStreaming;
 pub use self::eventsource::EventSource;
 pub use self::htmlfile::HTMLFile;
+pub use self::websocket::Websocket;
 pub use self::jsonp::{JSONPolling, JSONPollingSend};
 
 pub const MAXSIZE: usize = 131_072;  // 128K bytes
@@ -92,11 +94,11 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
             .map(|res, act, ctx| {
                 match res {
                     Ok(mut rec) => {
-                        println!("STATE: {:?}", rec.0.state);
                         // copy messages into buffer
                         while let Ok(Async::Ready(Some(msg))) = rec.1.poll() {
                             rec.0.buffer.push_back(msg);
                         };
+                        println!("STATE: {:?} {:?}", rec.0.state, rec.0.buffer);
 
                         match rec.0.state {
                             SessionState::Running => {
@@ -116,8 +118,14 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                                     // release is send stops
                                     ctx.state().send(Release{ses: rec.0});
                                 } else {
-                                    act.set_session_record(rec.0);
-                                    ctx.add_stream(rec.1);
+                                    // send buffered messages
+                                    if let SendResult::Stop = act.send_buffered(ctx, &mut rec.0) {
+                                        // release immidietly
+                                        ctx.state().send(Release{ses: rec.0});
+                                    } else {
+                                        act.set_session_record(rec.0);
+                                        ctx.add_stream(rec.1);
+                                    }
                                 }
                             },
 

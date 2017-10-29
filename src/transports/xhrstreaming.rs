@@ -56,7 +56,7 @@ pub struct XhrStreaming<S, SM>
 }
 
 impl<S, SM> XhrStreaming<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     pub fn handle(req: &mut HttpRequest, ctx: &mut HttpContext<Self>, maxsize: usize)
                   -> RouteResult<Self>
@@ -78,15 +78,16 @@ impl<S, SM> XhrStreaming<S, SM>
         }
 
         let _ = req.load_cookies();
-        ctx.start(httpcodes::HTTPOk
-                  .builder()
-                  // .header(CONNECTION, "close")
-                  .content_type("application/javascript; charset=UTF-8")
-                  .force_close()
-                  .sockjs_no_cache()
-                  .sockjs_session_cookie(req)
-                  .sockjs_cors_headers(req.headers())
-                  .body(Body::Streaming));
+        ctx.start(
+            httpcodes::HTTPOk.builder()
+                .content_type("application/javascript; charset=UTF-8")
+                .force_close()
+                .sockjs_no_cache()
+                .sockjs_session_cookie(req)
+                .sockjs_cors_headers(req.headers())
+                .if_true(
+                    req.version() == Version::HTTP_11, |builder| {builder.enable_chunked();})
+                .body(Body::Streaming));
         ctx.write(OPEN_SEQ);
 
         // init transport, but aftre prelude only
@@ -108,7 +109,7 @@ impl<S, SM> XhrStreaming<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for XhrStreaming<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self>;
 
@@ -155,10 +156,10 @@ impl<S, SM> Transport<S, SM> for XhrStreaming<S, SM>
             },
             Frame::Close(code) => {
                 record.close();
-                let blob = format!("c[{},{:?}]\n", code.num(), code.reason());
-                let size = blob.len();
-                ctx.write(blob);
-                size
+                ctx.write(format!("c[{},{:?}]\n", code.num(), code.reason()));
+                ctx.write_eof();
+                ctx.stop();
+                return SendResult::Stop;
             }
         };
 

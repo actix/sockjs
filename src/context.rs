@@ -114,6 +114,7 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
 
     /// Close session
     pub fn close(&mut self, code: CloseCode) {
+        println!("CLOSE");
         let frm = Frame::Close(code);
         if let Some(ref mut tx) = self.tx {
             match tx.unbounded_send(frm) {

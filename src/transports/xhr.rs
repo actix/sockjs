@@ -23,7 +23,7 @@ pub struct Xhr<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for Xhr<S, SM>
-    where S: Session, SM: SessionManager<S>, SM::Context: ToEnvelope<SM>
+    where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self>;
 
