@@ -9,7 +9,7 @@
 
 ---
 
-SockJS is licensed under the [Apache-2.0 license](http://opensource.org/licenses/APACHE-2.0).
+Actix SockJS is licensed under the [Apache-2.0 license](http://opensource.org/licenses/APACHE-2.0).
 
 ## Usage
 
