@@ -9,7 +9,7 @@ use regex::Regex;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
-use manager::{Release, Record, SessionManager};
+use manager::{Record, SessionManager};
 
 use super::{MAXSIZE, Transport, SendResult};
 
@@ -92,7 +92,7 @@ impl<S, SM> HTMLFile<S, SM>
             // init transport, but aftre prelude only
             let session = req.match_info().get("session").unwrap().to_owned();
             ctx.drain().map(move |_, _, ctx| {
-                ctx.run_later(Duration::new(0, 800000), move |act, ctx| {
+                ctx.run_later(Duration::new(0, 800_000), move |act, ctx| {
                     act.hb(ctx);
                     act.init_transport(session, ctx);
                 });
@@ -117,11 +117,7 @@ impl<S, SM> Actor for HTMLFile<S, SM>
     type Context = HttpContext<Self>;
 
     fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
-        println!("STOPPING, {:?}", self.rec.is_some());
-        if let Some(rec) = self.rec.take() {
-            ctx.state().send(Release{ses: rec});
-        }
-        ctx.terminate()
+        self.stop(ctx);
     }
 }
 
@@ -152,14 +148,12 @@ impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
                 let blob = format!("c[{},{:?}]", code.num(), code.reason());
                 self.write(&blob, ctx);
                 ctx.write_eof();
-                ctx.stop();
                 return SendResult::Stop
             }
         };
 
         if self.size > self.maxsize {
             ctx.write_eof();
-            ctx.stop();
             SendResult::Stop
         } else {
             SendResult::Continue
@@ -174,8 +168,8 @@ impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
         self.write("h", ctx);
     }
 
-    fn set_session_record(&mut self, rec: Record) {
-        self.rec = Some(rec)
+    fn session_record(&mut self) -> &mut Option<Record> {
+        &mut self.rec
     }
 }
 
@@ -200,10 +194,8 @@ impl<S, SM> Handler<Frame> for HTMLFile<S, SM>
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, msg, &mut rec);
             self.rec = Some(rec);
-        } else {
-            if let Some(ref mut rec) = self.rec {
-                rec.buffer.push_back(msg);
-            };
+        } else if let Some(ref mut rec) = self.rec {
+            rec.buffer.push_back(msg);
         }
         Self::empty()
     }

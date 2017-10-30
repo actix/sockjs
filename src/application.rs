@@ -16,7 +16,9 @@ use session::Session;
 use manager::SessionManager;
 use utils::{Info, SockjsHeaders};
 
-
+/// Sockjs application
+///
+/// Sockjs application implements sockjs protocol.
 pub struct SockJS<A, SM, S=()>
     where A: Actor<Context=SockJSContext<A>> + Session,
           SM: SessionManager<A>,
@@ -39,11 +41,14 @@ impl<A, SM, S> SockJS<A, SM, S>
           SM: SessionManager<A>,
           S: 'static,
 {
+    /// Create new sockjs application. Sockjs application requires
+    /// Session manager's address.
     pub fn new(manager: SyncAddress<SM>) -> Self
     {
         let routes = vec![
             ("/", RouteType::Greeting),
             ("/info", RouteType::Info),
+            ("/websocket", RouteType::Websocket),
             ("/{server}/{session}/{transport}", RouteType::Transport),
             ("/websocket", RouteType::Websocket),
             ("/iframe.html", RouteType::IFrame),
@@ -68,6 +73,7 @@ impl<A, SM, S> SockJS<A, SM, S>
         }
     }
 
+    /// Disable specific transports
     pub fn disable_transports<T, I>(mut self, disabled: I) -> Self
         where T: Into<String>, I: IntoIterator<Item = T>
     {
@@ -78,15 +84,13 @@ impl<A, SM, S> SockJS<A, SM, S>
     }
 
     /// Set max size for single streaming request (EventSource, XhrStreamimng).
-    pub fn maxsize(mut self, size: usize) -> Self
-    {
+    pub fn maxsize(mut self, size: usize) -> Self {
         self.max_size = size;
         self
     }
 
     /// Set cookie needed param
-    pub fn cookie_needed(mut self, val: bool) -> Self
-    {
+    pub fn cookie_needed(mut self, val: bool) -> Self {
         self.cookie_needed = val;
         self
     }
@@ -101,13 +105,13 @@ enum RouteType {
     IFrame,
 }
 
+#[doc(hidden)]
 impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
     where A: Actor<Context=SockJSContext<A>> + Session,
           SM: SessionManager<A>,
           S: 'static
 {
     fn handle(&self, req: &mut HttpRequest, payload: Payload, _: Rc<S>) -> Task {
-        println!("PATH: {:?}", req.path());
         if let Some((params, route)) = self.router.recognize(req.path()) {
             match *route {
                 RouteType::Greeting => {
@@ -138,7 +142,7 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                                 .sockjs_cache_headers()
                                 .sockjs_allow_methods()
                                 .sockjs_cors_headers(req.headers())
-                                .sockjs_session_cookie(&req)
+                                .sockjs_session_cookie(req)
                                 .finish()
                         )
                     } else {
@@ -183,39 +187,38 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
 
                     let res = {
                         if tr == "websocket" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::Websocket::<A, _>::request(req, payload, &mut ctx)
                                 .map(|r| r.into(ctx))
                         } else if tr == "xhr_streaming" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::XhrStreaming::<A, _>
                                 ::handle(req, &mut ctx, self.max_size)
                                 .map(|r| r.into(ctx))
                         } else if tr == "xhr" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::Xhr::<A, _>::request(req, payload, &mut ctx)
                                 .map(|r| r.into(ctx))
                         } else if tr == "xhr_send" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::XhrSend::<A, _>::request(req, payload, &mut ctx)
                                 .map(|r| r.into(ctx))
                         } else if tr == "htmlfile" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::HTMLFile::<A, _>
                                 ::handle(req, &mut ctx, self.max_size)
                                 .map(|r| r.into(ctx))
                         } else if tr == "eventsource" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::EventSource::<A, _>
                                 ::handle(req, &mut ctx, self.max_size)
                                 .map(|r| r.into(ctx))
                         } else if tr == "jsonp" {
-                            println!("REQ: {:?}", req);
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::JSONPolling::<A, _>::request(req, payload, &mut ctx)
                                 .map(|r| r.into(ctx))
                         } else if tr == "jsonp_send" {
-                            let mut ctx = HttpContext::new(self.manager.clone());
+                            let mut ctx = HttpContext::new(Rc::clone(&self.manager));
                             transports::JSONPollingSend::<A, _>::request(req, payload, &mut ctx)
                                 .map(|r| r.into(ctx))
                         } else {
@@ -227,52 +230,22 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                         Err(err) => return Task::reply(err),
                     }
                 },
-                _ => ()
+                RouteType::Websocket => {
+                    let mut ctx = HttpContext::new(Rc::clone(&self.manager));
+                    match transports::RawWebsocket::request(req, payload, &mut ctx)
+                        .map(|r| r.into(ctx))
+                    {
+                        Ok(resp) => return resp,
+                        Err(err) => return Task::reply(err),
+                    }
+                },
             }
         }
-        return Task::reply(httpcodes::HTTPNotFound)
+        Task::reply(httpcodes::HTTPNotFound)
     }
 
     fn set_prefix(&mut self, prefix: String) {
         self.prefix = prefix.len();
         self.router.set_prefix(prefix);
-    }
-}
-
-struct SockJSRoute<S> {
-    state: PhantomData<S>,
-}
-
-impl<S: 'static> Actor for SockJSRoute<S> {
-    type Context = HttpContext<Self>;
-}
-
-impl<S: 'static> Route for SockJSRoute<S> {
-    type State = S;
-
-    fn request(req: &mut HttpRequest, payload: Payload,
-               ctx: &mut HttpContext<Self>) -> RouteResult<Self> {
-        let resp = ws::handshake(&req)?;
-        ctx.start(resp);
-        ctx.add_stream(ws::WsStream::new(payload));
-        Reply::async(SockJSRoute{state: PhantomData})
-    }
-}
-
-
-impl<S: 'static> StreamHandler<ws::Message> for SockJSRoute<S> {}
-
-impl<S: 'static> Handler<ws::Message> for SockJSRoute<S> {
-    fn handle(&mut self, msg: ws::Message, ctx: &mut HttpContext<Self>)
-              -> Response<Self, ws::Message>
-    {
-        println!("WS: {:?}", msg);
-        match msg {
-            ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, msg),
-            ws::Message::Text(text) => ws::WsWriter::text(ctx, &text),
-            ws::Message::Binary(bin) => ws::WsWriter::binary(ctx, bin),
-            _ => (),
-        }
-        Self::empty()
     }
 }

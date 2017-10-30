@@ -7,6 +7,7 @@ use protocol::Frame;
 use context::{SockJSContext, SockJSChannel};
 use session::{Message, Session, SessionState, SessionError};
 
+#[doc(hidden)]
 pub trait SessionManager<S: Session>: Actor +
     Handler<Acquire> + Handler<Release> + Handler<SessionMessage> {}
 
@@ -79,18 +80,18 @@ impl Record {
     pub fn close(&mut self) {
         self.state = SessionState::Closed;
     }
+
+    pub fn interrupted(&mut self) {
+        if self.state == SessionState::Running {
+            self.state = SessionState::Interrupted;
+        }
+    }
 }
 
 struct Entry<S: Session> {
     addr: SyncAddress<S>,
     record: Option<Record>,
 }
-
-/*impl<S: Session> Entry<S> {
-    fn is_acquired(&self) -> bool {
-        self.record.is_none()
-    }
-}*/
 
 /// Session manager
 pub struct SockJSManager<S: Session> {
@@ -100,13 +101,16 @@ pub struct SockJSManager<S: Session> {
 
 impl<S: Session> SessionManager<S> for SockJSManager<S> {}
 
-impl<S: Session> SockJSManager<S> {
-    pub fn new() -> SockJSManager<S> {
+impl<S: Session> Default for SockJSManager<S> {
+    fn default() -> SockJSManager<S> {
         SockJSManager {
             idle: HashSet::new(),
             sessions: HashMap::new(),
         }
     }
+}
+
+impl<S: Session> SockJSManager<S> {
 
     fn hb(&self, ctx: &mut Context<Self>) {
         ctx.run_later(Duration::new(10, 0), |act, ctx| {
@@ -123,6 +127,7 @@ impl<S: Session> Actor for SockJSManager<S> {
     }
 }
 
+#[doc(hidden)]
 impl<S: Session> Handler<Acquire> for SockJSManager<S> {
     fn handle(&mut self, msg: Acquire, _: &mut Context<Self>) -> Response<Self, Acquire>
     {
@@ -145,6 +150,7 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
     }
 }
 
+#[doc(hidden)]
 impl<S: Session> Handler<Release> for SockJSManager<S> {
     fn handle(&mut self, mut msg: Release, _: &mut Context<Self>)
               -> Response<Self, Release>
@@ -159,6 +165,7 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
     }
 }
 
+#[doc(hidden)]
 impl<S: Session> Handler<SessionMessage> for SockJSManager<S> {
     fn handle(&mut self, msg: SessionMessage, _: &mut Context<Self>)
               -> Response<Self, SessionMessage>

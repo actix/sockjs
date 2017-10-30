@@ -6,17 +6,16 @@ use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot::Sender;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
+use session::{Message, Session};
 use protocol::{CloseCode, Frame};
-use session::{Session, Message};
 
 #[derive(Debug)]
 pub enum SockJSChannel {
     Acquired(UnboundedSender<Frame>),
     Released,
-    Message(String),
 }
 
-/// SockJS Context
+/// Sockjs session context
 pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
 {
     act: A,
@@ -91,15 +90,10 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
         Box::new(self.address.unsync_address())
     }
 
-    /// Manually expire a session
-    pub fn expire(&mut self) {
-        unimplemented!()
-    }
-
     /// Send message to peer
-    pub fn send<M>(&mut self, message: M) where M: Into<Frame>
+    pub fn send<M>(&mut self, message: M) where M: Into<Message>
     {
-        let msg = message.into();
+        let msg = Frame::Message(message.into().0);
         if let Some(ref mut tx) = self.tx {
             match tx.unbounded_send(msg) {
                 Ok(()) => return,
@@ -113,9 +107,8 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
     }
 
     /// Close session
-    pub fn close(&mut self, code: CloseCode) {
-        println!("CLOSE");
-        let frm = Frame::Close(code);
+    pub fn close(&mut self) {
+        let frm = Frame::Close(CloseCode::GoAway);
         if let Some(ref mut tx) = self.tx {
             match tx.unbounded_send(frm) {
                 Ok(()) => return,
@@ -126,9 +119,9 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
         }
     }
 
-    /// Check if transport connected to peer
+    /// Check if transport is connected
     pub fn connected(&mut self) -> bool {
-        unimplemented!()
+        self.tx.is_some()
     }
 }
 
@@ -205,19 +198,14 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
                                 self.tx = Some(tx);
                                 self.act.acquired(ctx);
                             }
-                            SockJSChannel::Released => self.act.released(ctx),
-                            SockJSChannel::Message(s) => {
-                                let fut = ResponseFuture{
-                                    resp: Handler::handle(
-                                        &mut self.act, Message::Str(s), ctx)};
-                                self.spawn(fut);
+                            SockJSChannel::Released => {
+                                self.tx.take();
+                                self.act.released(ctx);
                             }
                         }
                         continue
                     },
-                    Ok(Async::Ready(None)) =>
-                        break,
-                    Ok(Async::NotReady) =>
+                    Ok(Async::Ready(None)) | Ok(Async::NotReady) =>
                         break,
                     Err(_) => {},
                 }
@@ -267,15 +255,7 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
     }
 }
 
-impl<A> std::fmt::Debug for SockJSContext<A> where A: Session<Context=Self> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "SockJSContext({:?}: actor:{:?}) {{ state: {:?}, connected: {}, items: {} }}",
-               self as *const _,
-               &self.act as *const _,
-               self.state, "-", self.items.is_empty())
-    }
-}
-
+#[doc(hidden)]
 impl<A> ToEnvelope<A> for SockJSContext<A>
     where A: Session<Context=SockJSContext<A>>,
 {
@@ -286,25 +266,5 @@ impl<A> ToEnvelope<A> for SockJSContext<A>
               M::Error: Send
     {
         RemoteEnvelope::new(msg, tx).into()
-    }
-}
-
-
-struct ResponseFuture<A, M> where A: Actor, M: ResponseType {
-    resp: Response<A, M>
-}
-
-impl<A, M> ActorFuture for ResponseFuture<A, M> where A: Actor, M: ResponseType {
-    type Item = ();
-    type Error = ();
-    type Actor = A;
-
-    fn poll(&mut self, act: &mut A, ctx: &mut A::Context) -> Poll<Self::Item, Self::Error>
-    {
-        match self.resp.poll_response(act, ctx) {
-            Ok(Async::Ready(_)) => Ok(Async::Ready(())),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(_) => Err(()),
-        }
     }
 }

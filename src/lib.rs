@@ -1,5 +1,7 @@
-//! SockJS server for [Actix](https://github.com/fafhrd91/actix)
+//! [`SockJS`](https://github.com/sockjs/sockjs-client) server
+//! for [Actix](https://github.com/actix/actix)
 
+#[macro_use]
 extern crate log;
 extern crate time;
 extern crate bytes;
@@ -30,6 +32,5 @@ mod transports;
 
 pub use application::SockJS;
 pub use context::SockJSContext;
-pub use manager::{SessionManager, SockJSManager};
-pub use session::{Message, Session, SessionState};
-pub use protocol::CloseCode;
+pub use manager::SockJSManager;
+pub use session::{Message, Session};

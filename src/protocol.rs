@@ -50,9 +50,8 @@ impl CloseCode {
     pub fn num(&self) -> usize {
         match *self {
             CloseCode::Interrupted => 1002,
-            CloseCode::GoAway => 3000,
             CloseCode::Acquired => 2010,
-            CloseCode::InternalError => 3000,
+            CloseCode::GoAway | CloseCode::InternalError => 3000,
         }
     }
 

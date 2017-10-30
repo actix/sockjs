@@ -1,16 +1,13 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+//! Test server for sockjs-protcol functiona tests
 extern crate actix;
 extern crate actix_web;
 extern crate sockjs;
 extern crate env_logger;
 
-use std::net;
-use std::str::FromStr;
-use std::time::Duration;
 use actix_web::*;
 use actix::prelude::*;
 
-use sockjs::{Message, Session, CloseCode, SockJSManager};
+use sockjs::{Message, Session, SockJSManager};
 
 #[derive(Debug)]
 struct Echo;
@@ -31,7 +28,6 @@ impl Handler<Message> for Echo {
     fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
               -> Response<Self, Message>
     {
-        println!("MESSAGE: {:?}", msg);
         ctx.send(msg);
         Self::empty()
     }
@@ -44,7 +40,7 @@ impl Actor for Close {
     type Context = sockjs::SockJSContext<Self>;
 
     fn started(&mut self, ctx: &mut sockjs::SockJSContext<Self>) {
-        ctx.close(CloseCode::GoAway)
+        ctx.close()
     }
 }
 
@@ -57,7 +53,7 @@ impl Default for Close {
 impl Session for Close {}
 
 impl Handler<Message> for Close {
-    fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
+    fn handle(&mut self, _: Message, _: &mut sockjs::SockJSContext<Self>)
               -> Response<Self, Message>
     {
         Self::empty()
@@ -71,10 +67,10 @@ fn main() {
 
     let sys = actix::System::new("sockjs-example");
 
-    let sm: SyncAddress<_> = SockJSManager::<Echo>::new().start();
-    let cl: SyncAddress<_> = SockJSManager::<Close>::new().start();
+    let sm: SyncAddress<_> = SockJSManager::<Echo>::start_default();
+    let cl: SyncAddress<_> = SockJSManager::<Close>::start_default();
 
-    let http = HttpServer::new(
+    HttpServer::new(
         Application::default("/")
             .middleware(Logger::new(None))
             .route_handler(

@@ -14,6 +14,7 @@ mod eventsource;
 mod jsonp;
 mod htmlfile;
 mod websocket;
+mod rawwebsocket;
 
 pub use self::xhr::Xhr;
 pub use self::xhrsend::XhrSend;
@@ -21,6 +22,7 @@ pub use self::xhrstreaming::XhrStreaming;
 pub use self::eventsource::EventSource;
 pub use self::htmlfile::HTMLFile;
 pub use self::websocket::Websocket;
+pub use self::rawwebsocket::RawWebsocket;
 pub use self::jsonp::{JSONPolling, JSONPollingSend};
 
 pub const MAXSIZE: usize = 131_072;  // 128K bytes
@@ -38,6 +40,23 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
     StreamHandler<Frame> + Route<State=SyncAddress<SM>>
     where S: Session, SM: SessionManager<S>,
 {
+    /// Set record
+    fn session_record(&mut self) -> &mut Option<Record>;
+
+    /// Stop transport and release session
+    fn stop(&mut self, ctx: &mut HttpContext<Self>) {
+        if let Some(mut rec) = self.session_record().take() {
+            trace!("STOPPING {:?}", ctx.connected());
+
+            // peer dropped connection
+            if !ctx.connected() {
+                rec.interrupted();
+            }
+            ctx.state().send(Release{ses: rec});
+        }
+        ctx.terminate()
+    }
+
     /// Send sockjs frame
     fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, record: &mut Record)
             -> SendResult;
@@ -52,23 +71,17 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
     fn send_buffered(&mut self, ctx: &mut HttpContext<Self>, record: &mut Record) -> SendResult {
         while !record.buffer.is_empty() {
             let is_msg = if let Some(front) = record.buffer.front() {
-                front.is_msg()
-            } else { false };
+                front.is_msg()} else { false };
 
             if is_msg {
                 let mut msg = Vec::new();
-
-                loop {
-                    if let Some(frm) = record.buffer.pop_front() {
-                        match frm {
-                            Frame::Message(s) => msg.push(s),
-                            _ => {
-                                record.buffer.push_front(frm);
-                                break
-                            }
+                while let Some(frm) = record.buffer.pop_front() {
+                    match frm {
+                        Frame::Message(s) => msg.push(s),
+                        _ => {
+                            record.buffer.push_front(frm);
+                            break
                         }
-                    } else {
-                        break
                     }
                 }
 
@@ -85,9 +98,6 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
         SendResult::Continue
     }
 
-    /// Set record
-    fn set_session_record(&mut self, record: Record);
-
     fn init_transport(&mut self, session: String, ctx: &mut HttpContext<Self>) {
         // acquire session
         ctx.state().call(self, Acquire::new(session))
@@ -98,7 +108,7 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                         while let Ok(Async::Ready(Some(msg))) = rec.1.poll() {
                             rec.0.buffer.push_back(msg);
                         };
-                        println!("STATE: {:?} {:?}", rec.0.state, rec.0.buffer);
+                        trace!("STATE: {:?}", rec.0.state);
 
                         match rec.0.state {
                             SessionState::Running => {
@@ -106,10 +116,10 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                                     // release immidietly
                                     ctx.state().send(Release{ses: rec.0});
                                 } else {
-                                    act.set_session_record(rec.0);
+                                    *act.session_record()  = Some(rec.0);
                                     ctx.add_stream(rec.1);
                                 }
-                            }
+                            },
 
                             SessionState::New => {
                                 rec.0.state = SessionState::Running;
@@ -117,22 +127,21 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                                 {
                                     // release is send stops
                                     ctx.state().send(Release{ses: rec.0});
+                                } else if let SendResult::Stop =
+                                    act.send_buffered(ctx, &mut rec.0) // send buffered messages
+                                {
+                                    // release immidietly
+                                    ctx.state().send(Release{ses: rec.0});
                                 } else {
-                                    // send buffered messages
-                                    if let SendResult::Stop = act.send_buffered(ctx, &mut rec.0) {
-                                        // release immidietly
-                                        ctx.state().send(Release{ses: rec.0});
-                                    } else {
-                                        act.set_session_record(rec.0);
-                                        ctx.add_stream(rec.1);
-                                    }
+                                    *act.session_record()  = Some(rec.0);
+                                    ctx.add_stream(rec.1);
                                 }
                             },
 
                             SessionState::Interrupted => {
                                 act.send(ctx, Frame::Close(CloseCode::Interrupted), &mut rec.0);
                                 ctx.state().send(Release{ses: rec.0});
-                            }
+                            },
 
                             SessionState::Closed => {
                                 act.send(ctx, Frame::Close(CloseCode::GoAway), &mut rec.0);
@@ -142,13 +151,14 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                     },
                     Err(err) => {
                         act.send_close(ctx, err.into());
+                        ctx.write_eof();
                     }
                 }
             })
             // session manager is dead?
             .map_err(|_, act, ctx| {
                 act.send_close(ctx, CloseCode::InternalError);
-                ctx.stop();
+                ctx.write_eof();
             })
             .wait(ctx);
 

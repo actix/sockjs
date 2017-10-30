@@ -47,7 +47,7 @@ impl<S, SM> Route for XhrSend<S, SM>
                     .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
                     .sockjs_cache_headers()
                     .sockjs_cors_headers(req.headers())
-                    .sockjs_session_cookie(&req)
+                    .sockjs_session_cookie(req)
                     .finish())
         }
         else if *req.method() != Method::GET && *req.method() != Method::POST {
@@ -60,7 +60,7 @@ impl<S, SM> Route for XhrSend<S, SM>
                 .content_type("text/plain; charset=UTF-8")
                 .sockjs_no_cache()
                 .sockjs_cors_headers(req.headers())
-                .sockjs_session_cookie(&req)
+                .sockjs_session_cookie(req)
                 .finish()?;
             ctx.add_stream(payload);
 
@@ -90,6 +90,7 @@ impl<S, SM> StreamHandler<PayloadItem, PayloadError> for XhrSend<S, SM>
                 ctx.write_eof();
                 return
             }
+
             // deserialize json
             let mut msgs: Vec<String> = match serde_json::from_slice(&self.buf) {
                 Ok(msgs) => msgs,
@@ -100,28 +101,33 @@ impl<S, SM> StreamHandler<PayloadItem, PayloadError> for XhrSend<S, SM>
                     return
                 }
             };
-            let msg = if msgs.len() == 1 {
-                Message::Str(msgs.pop().unwrap())
-            } else {
-                msgs.into()
-            };
 
-            ctx.state().call(
-                self, SessionMessage {
-                    sid: sid.clone(),
-                    msg: msg})
-                .map(|res, act, ctx| {
-                    match res {
-                        Ok(_) => ctx.start(act.resp.take().unwrap()),
-                        Err(_) => ctx.start(httpcodes::HTTPNotFound),
-                    }
-                    ctx.write_eof();
-                })
-                .map_err(|_, _, ctx| {
-                    ctx.start(httpcodes::HTTPNotFound);
-                    ctx.write_eof();
-                })
-                .wait(ctx);
+            if !msgs.is_empty() {
+                let last = msgs.pop().unwrap();
+                for msg in msgs {
+                    ctx.state().send(
+                        SessionMessage {
+                            sid: sid.clone(),
+                            msg: Message(msg)});
+                }
+
+                ctx.state().call(
+                    self, SessionMessage {
+                        sid: sid.clone(),
+                        msg: Message(last)})
+                    .map(|res, act, ctx| {
+                        match res {
+                            Ok(_) => ctx.start(act.resp.take().unwrap()),
+                            Err(_) => ctx.start(httpcodes::HTTPNotFound),
+                        }
+                        ctx.write_eof();
+                    })
+                    .map_err(|_, _, ctx| {
+                        ctx.start(httpcodes::HTTPNotFound);
+                        ctx.write_eof();
+                    })
+                    .wait(ctx);
+            }
         }
     }
 }

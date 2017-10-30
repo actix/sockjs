@@ -45,8 +45,8 @@ git = "https://github.com/actix/actix.git"
 
 [dependencies.actix-web]
 #version = "0.1"
-path = "../actix-web"
-#git = "https://github.com/fafhrd91/actix-web.git"
+#path = "../actix-web"
+git = "https://github.com/actix/actix-web.git"
 
 [profile.release]
 lto = true

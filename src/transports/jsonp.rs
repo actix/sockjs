@@ -10,7 +10,7 @@ use percent_encoding::percent_decode;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::{Message, Session};
-use manager::{Release, Record, SessionManager, SessionMessage};
+use manager::{Record, SessionManager, SessionMessage};
 
 use super::{MAXSIZE, Transport, SendResult};
 
@@ -31,11 +31,7 @@ impl<S, SM> Actor for JSONPolling<S, SM>
     type Context = HttpContext<Self>;
 
     fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
-        println!("STOPPING");
-        if let Some(rec) = self.rec.take() {
-            ctx.state().send(Release{ses: rec});
-        }
-        ctx.terminate()
+        self.stop(ctx);
     }
 }
 
@@ -78,7 +74,6 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
             }
         };
         ctx.write_eof();
-        ctx.stop();
         SendResult::Stop
     }
 
@@ -86,18 +81,16 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
     {
         self.write("h\n", ctx);
         ctx.write_eof();
-        ctx.stop();
     }
 
     fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode)
     {
         self.write(&format!("c[{},{:?}]", code.num(), code.reason()), ctx);
         ctx.write_eof();
-        ctx.stop();
     }
 
-    fn set_session_record(&mut self, record: Record) {
-        self.rec = Some(record);
+    fn session_record(&mut self) -> &mut Option<Record> {
+        &mut self.rec
     }
 }
 
@@ -160,10 +153,8 @@ impl<S, SM> Handler<Frame> for JSONPolling<S, SM>
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, msg, &mut rec);
             self.rec = Some(rec);
-        } else {
-            if let Some(ref mut rec) = self.rec {
-                rec.buffer.push_back(msg);
-            };
+        } else if let Some(ref mut rec) = self.rec {
+            rec.buffer.push_back(msg);
         }
         Self::empty()
     }
@@ -206,7 +197,7 @@ impl<S, SM> Route for JSONPollingSend<S, SM>
                 .builder()
                 .content_type("text/plain; charset=UTF-8")
                 .sockjs_no_cache()
-                .sockjs_session_cookie(&req)
+                .sockjs_session_cookie(req)
                 .body("ok")?;
             ctx.add_stream(payload);
 
@@ -277,30 +268,31 @@ impl<S, SM> StreamHandler<PayloadItem, PayloadError> for JSONPollingSend<S, SM>
                 ctx.start(self.resp.take().unwrap());
                 ctx.write_eof();
                 return
-            }
-
-            let msg = if msgs.len() == 1 {
-                Message::Str(msgs.pop().unwrap())
             } else {
-                msgs.into()
-            };
-
-            ctx.state().call(
-                self, SessionMessage {
-                    sid: sid.clone(),
-                    msg: msg})
-                .map(|res, act, ctx| {
-                    match res {
-                        Ok(_) => ctx.start(act.resp.take().unwrap()),
-                        Err(_) => ctx.start(httpcodes::HTTPNotFound),
-                    }
-                    ctx.write_eof();
-                })
-                .map_err(|_, _, ctx| {
-                    ctx.start(httpcodes::HTTPNotFound);
-                    ctx.write_eof();
-                })
-                .wait(ctx);
+                let last = msgs.pop().unwrap();
+                for msg in msgs {
+                    ctx.state().send(
+                        SessionMessage {
+                            sid: sid.clone(),
+                            msg: Message(msg)});
+                }
+                ctx.state().call(
+                    self, SessionMessage {
+                        sid: sid.clone(),
+                        msg: Message(last)})
+                    .map(|res, act, ctx| {
+                        match res {
+                            Ok(_) => ctx.start(act.resp.take().unwrap()),
+                            Err(_) => ctx.start(httpcodes::HTTPNotFound),
+                        }
+                        ctx.write_eof();
+                    })
+                    .map_err(|_, _, ctx| {
+                        ctx.start(httpcodes::HTTPNotFound);
+                        ctx.write_eof();
+                    })
+                    .wait(ctx);
+            }
         }
     }
 }

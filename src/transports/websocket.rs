@@ -1,4 +1,3 @@
-use std::time::Duration;
 use std::marker::PhantomData;
 
 use actix::*;
@@ -26,8 +25,8 @@ impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
     type Context = HttpContext<Self>;
 
     fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
-        println!("STOPPING");
-        if let Some(rec) = self.rec.take() {
+        if let Some(mut rec) = self.rec.take() {
+            rec.close();
             ctx.state().send(Release{ses: rec});
         }
         ctx.terminate()
@@ -73,8 +72,8 @@ impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionM
         ws::WsWriter::text(ctx, &format!("c[{},{:?}]", code.num(), code.reason()));
     }
 
-    fn set_session_record(&mut self, record: Record) {
-        self.rec = Some(record);
+    fn session_record(&mut self) -> &mut Option<Record> {
+        &mut self.rec
     }
 }
 
@@ -89,18 +88,14 @@ impl<S, SM> Route for Websocket<S, SM>
         ctx.start(ws::handshake(req)?);
         ctx.add_stream(ws::WsStream::new(payload));
 
-        // init transport, but aftre prelude only
+        let mut tr = Websocket{s: PhantomData,
+                               sm: PhantomData,
+                               rec: None};
+        // init transport
         let session = req.match_info().get("session").unwrap().to_owned();
-        ctx.drain().map(move |_, _, ctx| {
-            ctx.run_later(Duration::new(0, 800000), move |act, ctx| {
-                act.init_transport(session, ctx);
-            });
-        }).wait(ctx);
+        tr.init_transport(session, ctx);
 
-        Reply::async(
-            Websocket{s: PhantomData,
-                      sm: PhantomData,
-                      rec: None})
+        Reply::async(tr)
     }
 }
 
@@ -114,10 +109,8 @@ impl<S, SM> Handler<Frame> for Websocket<S, SM>
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, msg, &mut rec);
             self.rec = Some(rec);
-        } else {
-            if let Some(ref mut rec) = self.rec {
-                rec.buffer.push_back(msg);
-            };
+        } else if let Some(ref mut rec) = self.rec {
+            rec.buffer.push_back(msg);
         }
         Self::empty()
     }
@@ -133,16 +126,21 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
               -> Response<Self, ws::Message>
     {
         // process websocket messages
-        println!("WS: {:?}", msg);
         match msg {
-            ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, msg),
+            ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, &msg),
             ws::Message::Text(text) => {
-                let mut msgs: Vec<String> = if text.starts_with('[') {
-                    match serde_json::from_slice(text[1..text.len()-2].as_ref()) {
+                if text.is_empty() {
+                    return Self::empty();
+                }
+                let msg: String = if text.starts_with('[') {
+                    if text.len() <= 2 {
+                        return Self::empty();
+                    }
+                    match serde_json::from_slice(text[1..text.len()-1].as_ref()) {
                         Ok(msgs) => msgs,
                         Err(_) => {
-                            // ws::WsWriter::close();
-                            //"Broken JSON encoding."
+                            ws::WsWriter::close(
+                                ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
                             ctx.stop();
                             return Self::empty()
                         }
@@ -151,31 +149,24 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                     match serde_json::from_slice(text[..].as_ref()) {
                         Ok(msgs) => msgs,
                         Err(_) => {
-                            // ws::WsWriter::close();
-                            //"Broken JSON encoding."
+                            ws::WsWriter::close(
+                                ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
                             ctx.stop();
                             return Self::empty()
                         }
                     }
                 };
 
-                if msgs.is_empty() {
-                    return Self::empty()
-                }
-                let msg = if msgs.len() == 1 {
-                    Message::Str(msgs.pop().unwrap())
-                } else {
-                    msgs.into()
-                };
-
                 if let Some(ref rec) = self.rec {
                     ctx.state().send(
                         SessionMessage {
                             sid: rec.sid.clone(),
-                            msg: msg});
+                            msg: Message(msg)});
                 }
             }
-            ws::Message::Binary(_) => unimplemented!(),
+            ws::Message::Binary(_) => {
+                error!("Binary messages are not supported");
+            },
             ws::Message::Closed | ws::Message::Error => {
                 if let Some(rec) = self.rec.take() {
                     ctx.state().send(Release{ses: rec});

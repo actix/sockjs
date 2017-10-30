@@ -8,7 +8,7 @@ use http::header::{self, ACCESS_CONTROL_ALLOW_METHODS};
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
-use manager::{Release, Record, SessionManager};
+use manager::{Record, SessionManager};
 
 use super::{Transport, SendResult};
 
@@ -28,10 +28,7 @@ impl<S, SM> Actor for Xhr<S, SM>
     type Context = HttpContext<Self>;
 
     fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
-        if let Some(rec) = self.rec.take() {
-            ctx.state().send(Release{ses: rec});
-        }
-        ctx.terminate()
+        self.stop(ctx)
     }
 }
 
@@ -52,7 +49,9 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
                 ctx.write("]\n");
             }
             Frame::MessageVec(s) => {
-                ctx.write(format!("a{}\n", s));
+                ctx.write("a");
+                ctx.write(s);
+                ctx.write("\n");
             }
             Frame::MessageBlob(_) => {
                 unimplemented!()
@@ -68,7 +67,6 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
         };
 
         ctx.write_eof();
-        ctx.stop();
         SendResult::Stop
     }
 
@@ -76,18 +74,16 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
     {
         ctx.write("h\n");
         ctx.write_eof();
-        ctx.stop();
     }
 
     fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode)
     {
         ctx.write(format!("c[{},{:?}]\n", code.num(), code.reason()));
         ctx.write_eof();
-        ctx.stop();
     }
 
-    fn set_session_record(&mut self, record: Record) {
-        self.rec = Some(record);
+    fn session_record(&mut self) -> &mut Option<Record> {
+        &mut self.rec
     }
 }
 
@@ -108,7 +104,7 @@ impl<S, SM> Route for Xhr<S, SM>
                     .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
                     .sockjs_cache_headers()
                     .sockjs_cors_headers(req.headers())
-                    .sockjs_session_cookie(&req)
+                    .sockjs_session_cookie(req)
                     .finish())
         }
         else if *req.method() != Method::POST {
@@ -146,10 +142,8 @@ impl<S, SM> Handler<Frame> for Xhr<S, SM>
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, msg, &mut rec);
             self.rec = Some(rec);
-        } else {
-            if let Some(ref mut rec) = self.rec {
-                rec.buffer.push_back(msg);
-            };
+        } else if let Some(ref mut rec) = self.rec {
+            rec.buffer.push_back(msg);
         }
         Self::empty()
     }

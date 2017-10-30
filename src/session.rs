@@ -1,11 +1,9 @@
-use std::fmt::Debug;
-use bytes::Bytes;
-use serde_json;
 use actix::*;
 
 use protocol::Frame;
 use context::SockJSContext;
 
+/// Session state
 #[derive(PartialEq, Debug)]
 pub enum SessionState {
     /// Newly create session
@@ -19,11 +17,7 @@ pub enum SessionState {
 }
 
 #[derive(Debug)]
-pub enum Message {
-    Str(String),
-    Bin(Bytes),
-    Strs(Vec<String>),
-}
+pub struct Message(pub String);
 
 impl ResponseType for Message {
     type Item = ();
@@ -32,20 +26,11 @@ impl ResponseType for Message {
 
 impl From<Message> for Frame {
     fn from(m: Message) -> Frame {
-        match m {
-            Message::Str(s) => Frame::Message(s),
-            Message::Bin(s) => Frame::MessageBlob(s),
-            Message::Strs(s) => Frame::MessageVec(serde_json::to_string(&s).unwrap()),
-        }
+        Frame::Message(m.0)
     }
 }
 
-impl From<Vec<String>> for Message {
-    fn from(msgs: Vec<String>) -> Message {
-        Message::Strs(msgs)
-    }
-}
-
+#[doc(hidden)]
 pub enum SessionError {
     Acquired,
     Interrupted,
@@ -53,14 +38,13 @@ pub enum SessionError {
     InternalError,
 }
 
+/// This trait defines sockjs session
 #[allow(unused_variables)]
-pub trait Session: Actor<Context=SockJSContext<Self>> + Default + Debug + Handler<Message> {
+pub trait Session: Actor<Context=SockJSContext<Self>> + Default + Handler<Message> {
 
-    fn acquired(&mut self, ctx: &mut SockJSContext<Self>) {
-        println!("acquired");
-    }
+    /// Method get called when transport acquires this session
+    fn acquired(&mut self, ctx: &mut SockJSContext<Self>) {}
 
-    fn released(&mut self, ctx: &mut SockJSContext<Self>) {
-        println!("released");
-    }
+    /// Method get called when transport releases this session
+    fn released(&mut self, ctx: &mut SockJSContext<Self>) {}
 }
