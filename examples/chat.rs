@@ -9,7 +9,7 @@ use std::io::Read;
 
 use actix_web::*;
 use actix::prelude::*;
-use sockjs::{Message, Session, SockJSManager, SockJSContext};
+use sockjs::{Message, Session, CloseReason, SockJSManager, SockJSContext};
 
 struct Chat;
 
@@ -25,7 +25,7 @@ impl Session for Chat {
     fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
         ctx.broadcast("Someone joined.")
     }
-    fn closed(&mut self, ctx: &mut SockJSContext<Self>, _: bool) {
+    fn closed(&mut self, ctx: &mut SockJSContext<Self>, _: CloseReason) {
         ctx.broadcast("Someone left.")
     }
 }

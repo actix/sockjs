@@ -7,7 +7,7 @@ use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 use actix::*;
 use protocol::Frame;
 use context::{SockJSContext, SockJSChannel};
-use session::{Message, Session, SessionState, SessionError};
+use session::{Message, Session, SessionState, SessionError, CloseReason};
 
 #[doc(hidden)]
 pub trait SessionManager<S>: Actor +
@@ -128,8 +128,6 @@ pub struct Record {
     pub state: SessionState,
     /// Peer messages, buffer for peer messages when transport is not connected
     pub buffer: VecDeque<RecordEntry>,
-    /// heartbeat
-    tick: Instant,
     /// Channel to context
     tx: UnboundedSender<SockJSChannel>,
 }
@@ -140,7 +138,6 @@ impl Record {
             sid: id,
             state: SessionState::New,
             buffer: VecDeque::new(),
-            tick: Instant::now(),
             tx: tx,
         }
     }
@@ -164,6 +161,8 @@ struct Entry<S: Session> {
     addr: SyncAddress<S>,
     record: Option<Record>,
     transport: Option<Box<Subscriber<Broadcast> + Send>>,
+    /// heartbeat
+    tick: Instant,
 }
 
 /// Session manager
@@ -188,6 +187,26 @@ impl<S: Session> SockJSManager<S> {
     fn hb(&self, ctx: &mut Context<Self>) {
         ctx.run_later(Duration::new(10, 0), |act, ctx| {
             act.hb(ctx);
+
+            let now = Instant::now();
+            let mut rem = Vec::new();
+            for sid in &act.idle {
+                if let Some(entry) = act.sessions.get(sid) {
+                    if entry.tick + Duration::new(10, 0) < now {
+                        rem.push(sid.clone());
+                    }
+                }
+            }
+
+            for sid in rem {
+                act.idle.remove(&sid);
+                if let Some(entry) = act.sessions.remove(&sid) {
+                    if let Some(rec) = entry.record {
+                        let _ = rec.tx.unbounded_send(
+                            SockJSChannel::Closed(CloseReason::Expired));
+                    }
+                }
+            }
         });
     }
 }
@@ -216,8 +235,13 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
             }
         }
         let (addr, tx) = SockJSContext::start(Arc::clone(&msg.sid), ctx.address());
-        self.sessions.insert(msg.sid.clone(),
-                             Entry{addr: addr, record: None, transport: Some(msg.addr)});
+        self.sessions.insert(
+            msg.sid.clone(),
+            Entry{addr: addr,
+                  record: None,
+                  transport: Some(msg.addr),
+                  tick: Instant::now(),
+            });
         let rec = Record::new(msg.sid, tx);
         let (tx, rx) = unbounded();
         let _ = rec.tx.unbounded_send(SockJSChannel::Acquired(tx));
@@ -227,19 +251,21 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
 
 #[doc(hidden)]
 impl<S: Session> Handler<Release> for SockJSManager<S> {
-    fn handle(&mut self, mut msg: Release, _: &mut Context<Self>)
+    fn handle(&mut self, msg: Release, _: &mut Context<Self>)
               -> Response<Self, Release>
     {
         if let Some(entry) = self.sessions.get_mut(&msg.ses.sid) {
             self.idle.insert(msg.ses.sid.clone());
-            msg.ses.tick = Instant::now();
             let _ = match msg.ses.state {
                 SessionState::Closed =>
-                    msg.ses.tx.unbounded_send(SockJSChannel::Closed),
+                    msg.ses.tx.unbounded_send(
+                        SockJSChannel::Closed(CloseReason::Normal)),
                 SessionState::Interrupted =>
-                    msg.ses.tx.unbounded_send(SockJSChannel::Interrupted),
+                    msg.ses.tx.unbounded_send(
+                        SockJSChannel::Closed(CloseReason::Interrupted)),
                 _ => msg.ses.tx.unbounded_send(SockJSChannel::Released)
             };
+            entry.tick = Instant::now();
             entry.record = Some(msg.ses);
             entry.transport.take();
         }

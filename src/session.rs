@@ -50,6 +50,17 @@ pub enum SessionError {
     InternalError,
 }
 
+#[derive(Debug)]
+/// Reason for closing session
+pub enum CloseReason {
+    /// Session closed session
+    Normal,
+    /// Session expired
+    Expired,
+    /// Peer get disconnected
+    Interrupted,
+}
+
 /// This trait defines sockjs session
 #[allow(unused_variables)]
 pub trait Session: Actor<Context=SockJSContext<Self>> + Default + Handler<Message> {
@@ -64,5 +75,5 @@ pub trait Session: Actor<Context=SockJSContext<Self>> + Default + Handler<Messag
     fn released(&mut self, ctx: &mut SockJSContext<Self>) {}
 
     /// Method get called when session get closed
-    fn closed(&mut self, ctx: &mut SockJSContext<Self>, interrupted: bool) {}
+    fn closed(&mut self, ctx: &mut SockJSContext<Self>, reason: CloseReason) {}
 }

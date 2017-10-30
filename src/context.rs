@@ -7,7 +7,7 @@ use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot::Sender;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
-use session::{Message, Session};
+use session::{Message, Session, CloseReason};
 use protocol::{CloseCode, Frame};
 use manager::{SockJSManager, Broadcast};
 
@@ -15,8 +15,7 @@ use manager::{SockJSManager, Broadcast};
 pub enum SockJSChannel {
     Acquired(UnboundedSender<Frame>),
     Released,
-    Closed,
-    Interrupted,
+    Closed(CloseReason),
 }
 
 /// Sockjs session context
@@ -223,14 +222,9 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
                                 self.tx.take();
                                 self.act.released(ctx);
                             },
-                            SockJSChannel::Interrupted => {
+                            SockJSChannel::Closed(reason) => {
                                 self.tx.take();
-                                self.act.closed(ctx, true);
-                                self.stop()
-                            }
-                            SockJSChannel::Closed => {
-                                self.tx.take();
-                                self.act.closed(ctx, false);
+                                self.act.closed(ctx, reason);
                                 self.stop()
                             }
                         }

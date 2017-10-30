@@ -7,13 +7,13 @@ extern crate env_logger;
 use actix_web::*;
 use actix::prelude::*;
 
-use sockjs::{Message, Session, SockJSManager};
+use sockjs::{Message, Session, SockJSManager, SockJSContext};
 
 #[derive(Debug)]
 struct Echo;
 
 impl Actor for Echo {
-    type Context = sockjs::SockJSContext<Self>;
+    type Context = SockJSContext<Self>;
 }
 
 impl Default for Echo {
@@ -25,7 +25,7 @@ impl Default for Echo {
 impl Session for Echo {}
 
 impl Handler<Message> for Echo {
-    fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
+    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
               -> Response<Self, Message>
     {
         ctx.send(msg);
@@ -39,7 +39,7 @@ struct Close;
 impl Actor for Close {
     type Context = sockjs::SockJSContext<Self>;
 
-    fn started(&mut self, ctx: &mut sockjs::SockJSContext<Self>) {
+    fn started(&mut self, ctx: &mut SockJSContext<Self>) {
         ctx.close()
     }
 }

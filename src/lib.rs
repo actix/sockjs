@@ -33,4 +33,4 @@ mod transports;
 pub use application::SockJS;
 pub use context::SockJSContext;
 pub use manager::SockJSManager;
-pub use session::{Message, Session};
+pub use session::{Message, Session, CloseReason};
