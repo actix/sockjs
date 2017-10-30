@@ -19,3 +19,65 @@ To use `sockjs`, add this to your `Cargo.toml`:
 [dependencies]
 sockjs = { git = "https://github.com/fafhrd91/actix-sockjs.git" }
 ```
+
+
+## Simple chat example
+
+```rust
+extern crate actix;
+extern crate actix_web;
+extern crate sockjs;
+
+use actix_web::*;
+use actix::prelude::*;
+use sockjs::{Message, Session, CloseReason, SockJSManager, SockJSContext};
+
+struct Chat;
+
+impl Actor for Chat {
+    type Context = SockJSContext<Self>;
+}
+
+impl Default for Chat {
+    fn default() -> Chat { Chat }
+}
+
+impl Session for Chat {
+    fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
+        ctx.broadcast("Someone joined.")
+    }
+    fn closed(&mut self, ctx: &mut SockJSContext<Self>, _: CloseReason) {
+        ctx.broadcast("Someone left.")
+    }
+}
+
+impl Handler<Message> for Chat {
+    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
+              -> Response<Self, Message>
+    {
+        // send message to all sessions
+        ctx.broadcast(msg);
+        Self::empty()
+    }
+}
+
+
+fn main() {
+    let sys = actix::System::new("sockjs-chat");
+
+    // SockJS session manager
+    let sm: SyncAddress<_> = SockJSManager::<Chat>::start_default();
+
+    HttpServer::new(
+        Application::default("/")
+            // register SockJS application
+            .route_handler(
+                "/sockjs/", sockjs::SockJS::<Chat, _>::new(sm.clone())))
+        .serve::<_, ()>("127.0.0.1:8080").unwrap();
+
+    Arbiter::system().send(msgs::SystemExit(0));
+    let _ = sys.run();
+}
+```
+
+[Full chat example](https://github.com/fafhrd91/actix-sockjs/blob/master/examples/chat.rs)

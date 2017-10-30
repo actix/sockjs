@@ -1,4 +1,4 @@
-//! Test server for sockjs-protcol functiona tests
+//! Simple chat server
 extern crate actix;
 extern crate actix_web;
 extern crate sockjs;
