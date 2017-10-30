@@ -20,7 +20,7 @@ To use `sockjs`, add this to your `Cargo.toml`:
 sockjs = { git = "https://github.com/fafhrd91/actix-sockjs.git" }
 ```
 
-## upported transports
+## Supported transports
 
 * [websocket](http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-10)
 * [xhr-streaming](https://secure.wikimedia.org/wikipedia/en/wiki/XMLHttpRequest#Cross-domain_requests)
