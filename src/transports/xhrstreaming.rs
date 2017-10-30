@@ -8,7 +8,7 @@ use http::header::ACCESS_CONTROL_ALLOW_METHODS;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
-use manager::{Record, SessionManager};
+use manager::{Broadcast, Record, SessionManager};
 
 use super::{MAXSIZE, Transport, SendResult};
 
@@ -122,21 +122,21 @@ impl<S, SM> Actor for XhrStreaming<S, SM>
 impl<S, SM> Transport<S, SM> for XhrStreaming<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, record: &mut Record)
+    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
             -> SendResult
     {
-        self.size += match msg {
+        self.size += match *msg {
             Frame::Heartbeat => {
                 ctx.write("h\n");
                 2
             },
-            Frame::Message(s) => {
+            Frame::Message(ref s) => {
                 let s = format!("a[{:?}]\n", s);
                 let size = s.len();
                 ctx.write(s);
                 size
             }
-            Frame::MessageVec(s) => {
+            Frame::MessageVec(ref s) => {
                 let s = format!("a{}\n", s);
                 let size = s.len();
                 ctx.write(s);
@@ -199,10 +199,26 @@ impl<S, SM> Handler<Frame> for XhrStreaming<S, SM>
 {
     fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, msg, &mut rec);
+            self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
-            rec.buffer.push_back(msg);
+            rec.add(msg);
+        }
+        Self::empty()
+    }
+}
+
+impl<S, SM> Handler<Broadcast> for XhrStreaming<S, SM>
+    where S: Session, SM: SessionManager<S>,
+{
+    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
+              -> Response<Self, Broadcast>
+    {
+        if let Some(mut rec) = self.rec.take() {
+            self.send(ctx, &msg.msg, &mut rec);
+            self.rec = Some(rec);
+        } else if let Some(ref mut rec) = self.rec {
+            rec.add(msg);
         }
         Self::empty()
     }

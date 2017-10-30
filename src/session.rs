@@ -30,6 +30,18 @@ impl From<Message> for Frame {
     }
 }
 
+impl From<&'static str> for Message {
+    fn from(s: &'static str) -> Message {
+        Message(s.to_owned())
+    }
+}
+
+impl From<String> for Message {
+    fn from(s: String) -> Message {
+        Message(s)
+    }
+}
+
 #[doc(hidden)]
 pub enum SessionError {
     Acquired,
@@ -42,9 +54,15 @@ pub enum SessionError {
 #[allow(unused_variables)]
 pub trait Session: Actor<Context=SockJSContext<Self>> + Default + Handler<Message> {
 
+    /// Method get called when session get opened
+    fn opened(&mut self, ctx: &mut SockJSContext<Self>) {}
+
     /// Method get called when transport acquires this session
     fn acquired(&mut self, ctx: &mut SockJSContext<Self>) {}
 
     /// Method get called when transport releases this session
     fn released(&mut self, ctx: &mut SockJSContext<Self>) {}
+
+    /// Method get called when session get closed
+    fn closed(&mut self, ctx: &mut SockJSContext<Self>, interrupted: bool) {}
 }

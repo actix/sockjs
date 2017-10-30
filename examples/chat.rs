@@ -9,27 +9,32 @@ use std::io::Read;
 
 use actix_web::*;
 use actix::prelude::*;
-use sockjs::{Message, Session, SockJSManager};
+use sockjs::{Message, Session, SockJSManager, SockJSContext};
 
 struct Chat;
 
 impl Actor for Chat {
-    type Context = sockjs::SockJSContext<Self>;
+    type Context = SockJSContext<Self>;
 }
 
 impl Default for Chat {
-    fn default() -> Chat {
-        Chat
+    fn default() -> Chat { Chat }
+}
+
+impl Session for Chat {
+    fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
+        ctx.broadcast("Someone joined.")
+    }
+    fn closed(&mut self, ctx: &mut SockJSContext<Self>, _: bool) {
+        ctx.broadcast("Someone left.")
     }
 }
 
-impl Session for Chat {}
-
 impl Handler<Message> for Chat {
-    fn handle(&mut self, msg: Message, ctx: &mut sockjs::SockJSContext<Self>)
+    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
               -> Response<Self, Message>
     {
-        ctx.send(msg);
+        ctx.broadcast(msg);
         Self::empty()
     }
 }

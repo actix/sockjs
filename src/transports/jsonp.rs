@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::marker::PhantomData;
 
 use actix::*;
@@ -10,7 +11,7 @@ use percent_encoding::percent_decode;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::{Message, Session};
-use manager::{Record, SessionManager, SessionMessage};
+use manager::{Broadcast, Record, SessionManager, SessionMessage};
 
 use super::{MAXSIZE, Transport, SendResult};
 
@@ -48,17 +49,17 @@ impl<S, SM>  JSONPolling<S, SM>
 impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, record: &mut Record)
+    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
             -> SendResult
     {
-        match msg {
+        match *msg {
             Frame::Heartbeat => {
                 self.write("h", ctx);
             },
-            Frame::Message(s) => {
+            Frame::Message(ref s) => {
                 self.write(&format!("a[{:?}]", s), ctx);
             }
-            Frame::MessageVec(s) => {
+            Frame::MessageVec(ref s) => {
                 self.write(&format!("a{}", s), ctx);
             }
             Frame::MessageBlob(_) => {
@@ -151,15 +152,30 @@ impl<S, SM> Handler<Frame> for JSONPolling<S, SM>
 {
     fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, msg, &mut rec);
+            self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
-            rec.buffer.push_back(msg);
+            rec.add(msg);
         }
         Self::empty()
     }
 }
 
+impl<S, SM> Handler<Broadcast> for JSONPolling<S, SM>
+    where S: Session, SM: SessionManager<S>,
+{
+    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
+              -> Response<Self, Broadcast>
+    {
+        if let Some(mut rec) = self.rec.take() {
+            self.send(ctx, &msg.msg, &mut rec);
+            self.rec = Some(rec);
+        } else if let Some(ref mut rec) = self.rec {
+            rec.add(msg);
+        }
+        Self::empty()
+    }
+}
 
 pub struct JSONPollingSend<S, SM>
     where S: Session, SM: SessionManager<S>,
@@ -218,6 +234,8 @@ impl<S, SM> StreamHandler<PayloadItem, PayloadError> for JSONPollingSend<S, SM>
 {
     fn finished(&mut self, ctx: &mut Self::Context) {
         if let Some(sid) = self.sid.take() {
+            let sid = Arc::new(sid);
+
             // empty message
             if self.buf.is_empty() {
                 ctx.start(httpcodes::HTTPInternalServerError.with_body("Payload expected."));

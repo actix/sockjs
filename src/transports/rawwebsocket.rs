@@ -6,7 +6,7 @@ use rand;
 
 use protocol::{Frame, CloseCode};
 use session::{Message, Session};
-use manager::{Release, Record, SessionManager, SessionMessage};
+use manager::{Broadcast, Release, Record, SessionManager, SessionMessage};
 
 use super::{Transport, SendResult};
 
@@ -36,17 +36,17 @@ impl<S, SM> Actor for RawWebsocket<S, SM> where S: Session, SM: SessionManager<S
 // Transport implementation
 impl<S, SM> Transport<S, SM> for RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, record: &mut Record)
+    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
             -> SendResult
     {
-        match msg {
+        match *msg {
             Frame::Heartbeat => {
                 ws::WsWriter::ping(ctx, "");
             },
-            Frame::Message(s) | Frame::MessageVec(s) => {
+            Frame::Message(ref s) | Frame::MessageVec(ref s) => {
                 ws::WsWriter::text(ctx, &s);
             }
-            Frame::MessageBlob(b) => {
+            Frame::MessageBlob(ref b) => {
                 ws::WsWriter::binary(ctx, Vec::from(b.as_ref()));
             }
             Frame::Open => (),
@@ -104,10 +104,24 @@ impl<S, SM> Handler<Frame> for RawWebsocket<S, SM>
 {
     fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, msg, &mut rec);
+            self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
-            rec.buffer.push_back(msg);
+            rec.buffer.push_back(msg.into());
+        }
+        Self::empty()
+    }
+}
+
+impl<S, SM> Handler<Broadcast> for RawWebsocket<S, SM>
+    where S: Session, SM: SessionManager<S>,
+{
+    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
+              -> Response<Self, Broadcast>
+    {
+        if let Some(mut rec) = self.rec.take() {
+            self.send(ctx, &msg.msg, &mut rec);
+            self.rec = Some(rec);
         }
         Self::empty()
     }

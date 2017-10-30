@@ -1,4 +1,5 @@
 use std;
+use std::sync::Arc;
 use std::collections::VecDeque;
 
 use actix::dev::*;
@@ -8,17 +9,21 @@ use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
 use session::{Message, Session};
 use protocol::{CloseCode, Frame};
+use manager::{SockJSManager, Broadcast};
 
 #[derive(Debug)]
 pub enum SockJSChannel {
     Acquired(UnboundedSender<Frame>),
     Released,
+    Closed,
+    Interrupted,
 }
 
 /// Sockjs session context
 pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
 {
     act: A,
+    sid: Arc<String>,
     state: ActorState,
     modified: bool,
     wait: ActorWaitCell<A>,
@@ -27,6 +32,7 @@ pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
     rx: UnboundedReceiver<SockJSChannel>,
     tx: Option<UnboundedSender<Frame>>,
     buf: VecDeque<Frame>,
+    sm: SyncAddress<SockJSManager<A>>,
 }
 
 impl<A> ActorContext for SockJSContext<A> where A: Session<Context=Self>
@@ -90,6 +96,11 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
         Box::new(self.address.unsync_address())
     }
 
+    /// Session id
+    pub fn sid(&self) -> &Arc<String> {
+        &self.sid
+    }
+
     /// Send message to peer
     pub fn send<M>(&mut self, message: M) where M: Into<Message>
     {
@@ -104,6 +115,12 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
             return
         }
         self.tx.take();
+    }
+
+    /// Send message to all sessions
+    pub fn broadcast<M>(&mut self, message: M) where M: Into<Message>
+    {
+        self.sm.send(Broadcast::new(Frame::Message(message.into().0)));
     }
 
     /// Close session
@@ -127,12 +144,14 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
 
 impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
-    pub(crate) fn start() -> (SyncAddress<A>, UnboundedSender<SockJSChannel>)
+    pub(crate) fn start(sid: Arc<String>, addr: SyncAddress<SockJSManager<A>>)
+                        -> (SyncAddress<A>, UnboundedSender<SockJSChannel>)
     {
         let (tx, rx) = unbounded();
 
         let mut ctx = SockJSContext {
             act: A::default(),
+            sid: sid,
             state: ActorState::Started,
             modified: false,
             items: ActorItemsCell::default(),
@@ -141,6 +160,7 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
             tx: None,
             rx: rx,
             buf: VecDeque::new(),
+            sm: addr,
         };
         let addr = ctx.address();
         Arbiter::handle().spawn(ctx);
@@ -164,6 +184,7 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
             ActorState::Started => {
                 Actor::started(&mut self.act, ctx);
                 self.state = ActorState::Running;
+                self.act.opened(ctx);
             },
             ActorState::Stopping => {
                 Actor::stopping(&mut self.act, ctx);
@@ -201,6 +222,16 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
                             SockJSChannel::Released => {
                                 self.tx.take();
                                 self.act.released(ctx);
+                            },
+                            SockJSChannel::Interrupted => {
+                                self.tx.take();
+                                self.act.closed(ctx, true);
+                                self.stop()
+                            }
+                            SockJSChannel::Closed => {
+                                self.tx.take();
+                                self.act.closed(ctx, false);
+                                self.stop()
                             }
                         }
                         continue

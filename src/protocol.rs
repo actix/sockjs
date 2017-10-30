@@ -38,7 +38,7 @@ impl From<Bytes> for Frame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum CloseCode {
     Interrupted,
     GoAway,

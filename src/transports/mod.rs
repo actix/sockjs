@@ -5,7 +5,7 @@ use futures::{Async, Stream};
 
 use protocol::{Frame, CloseCode};
 use session::{Session, SessionState};
-use manager::{Acquire, Release, Record, SessionManager};
+use manager::{Acquire, Release, Broadcast, Record, RecordEntry, SessionManager};
 
 mod xhr;
 mod xhrsend;
@@ -37,7 +37,7 @@ pub enum SendResult {
 }
 
 trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
-    StreamHandler<Frame> + Route<State=SyncAddress<SM>>
+    StreamHandler<Frame> + Handler<Broadcast> + Route<State=SyncAddress<SM>>
     where S: Session, SM: SessionManager<S>,
 {
     /// Set record
@@ -58,7 +58,7 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
     }
 
     /// Send sockjs frame
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, record: &mut Record)
+    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
             -> SendResult;
 
     /// Send close frame
@@ -77,7 +77,7 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                 let mut msg = Vec::new();
                 while let Some(frm) = record.buffer.pop_front() {
                     match frm {
-                        Frame::Message(s) => msg.push(s),
+                        RecordEntry::Frame(Frame::Message(s)) => msg.push(s),
                         _ => {
                             record.buffer.push_front(frm);
                             break
@@ -85,12 +85,12 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                     }
                 }
 
-                record.buffer.push_front(
+                record.add(
                     Frame::MessageVec(serde_json::to_string(&msg).unwrap()));
             }
 
             if let Some(msg) = record.buffer.pop_front() {
-                if let SendResult::Stop = self.send(ctx, msg, record) {
+                if let SendResult::Stop = self.send(ctx, msg.as_ref(), record) {
                     return SendResult::Stop
                 }
             }
@@ -100,13 +100,14 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
 
     fn init_transport(&mut self, session: String, ctx: &mut HttpContext<Self>) {
         // acquire session
-        ctx.state().call(self, Acquire::new(session))
+        let addr = ctx.sync_subscriber();
+        ctx.state().call(self, Acquire::new(session, addr))
             .map(|res, act, ctx| {
                 match res {
                     Ok(mut rec) => {
                         // copy messages into buffer
                         while let Ok(Async::Ready(Some(msg))) = rec.1.poll() {
-                            rec.0.buffer.push_back(msg);
+                            rec.0.add(msg);
                         };
                         trace!("STATE: {:?}", rec.0.state);
 
@@ -116,14 +117,14 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                                     // release immidietly
                                     ctx.state().send(Release{ses: rec.0});
                                 } else {
-                                    *act.session_record()  = Some(rec.0);
+                                    *act.session_record() = Some(rec.0);
                                     ctx.add_stream(rec.1);
                                 }
                             },
 
                             SessionState::New => {
                                 rec.0.state = SessionState::Running;
-                                if let SendResult::Stop = act.send(ctx, Frame::Open, &mut rec.0)
+                                if let SendResult::Stop = act.send(ctx, &Frame::Open, &mut rec.0)
                                 {
                                     // release is send stops
                                     ctx.state().send(Release{ses: rec.0});
@@ -139,12 +140,12 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                             },
 
                             SessionState::Interrupted => {
-                                act.send(ctx, Frame::Close(CloseCode::Interrupted), &mut rec.0);
+                                act.send(ctx, &Frame::Close(CloseCode::Interrupted), &mut rec.0);
                                 ctx.state().send(Release{ses: rec.0});
                             },
 
                             SessionState::Closed => {
-                                act.send(ctx, Frame::Close(CloseCode::GoAway), &mut rec.0);
+                                act.send(ctx, &Frame::Close(CloseCode::GoAway), &mut rec.0);
                                 ctx.state().send(Release{ses: rec.0});
                             }
                         }
@@ -161,6 +162,5 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
                 ctx.write_eof();
             })
             .wait(ctx);
-
     }
 }

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::marker::PhantomData;
 
 use actix::*;
@@ -80,6 +81,8 @@ impl<S, SM> StreamHandler<PayloadItem, PayloadError> for XhrSend<S, SM>
 {
     fn finished(&mut self, ctx: &mut Self::Context) {
         if let Some(sid) = self.sid.take() {
+            let sid = Arc::new(sid);
+
             // empty message
             if self.buf.is_empty() {
                 ctx.start(httpcodes::HTTPInternalServerError.with_body("Payload expected."));

@@ -9,7 +9,7 @@ use regex::Regex;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
-use manager::{Record, SessionManager};
+use manager::{Broadcast, Record, SessionManager};
 
 use super::{MAXSIZE, Transport, SendResult};
 
@@ -125,16 +125,18 @@ impl<S, SM> Actor for HTMLFile<S, SM>
 impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: Frame, rec: &mut Record) -> SendResult {
-        match msg {
+    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, rec: &mut Record)
+            -> SendResult
+    {
+        match *msg {
             Frame::Heartbeat => {
                 self.write("h", ctx);
             },
-            Frame::Message(s) => {
+            Frame::Message(ref s) => {
                 let blob = format!("a[{}]", serde_json::to_string(&s).unwrap());
                 self.write(&blob, ctx);
             }
-            Frame::MessageVec(s) => {
+            Frame::MessageVec(ref s) => {
                 self.write(&s, ctx);
             }
             Frame::MessageBlob(_) => {
@@ -192,10 +194,26 @@ impl<S, SM> Handler<Frame> for HTMLFile<S, SM>
 {
     fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, msg, &mut rec);
+            self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
-            rec.buffer.push_back(msg);
+            rec.add(msg);
+        }
+        Self::empty()
+    }
+}
+
+impl<S, SM> Handler<Broadcast> for HTMLFile<S, SM>
+    where S: Session, SM: SessionManager<S>,
+{
+    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
+              -> Response<Self, Broadcast>
+    {
+        if let Some(mut rec) = self.rec.take() {
+            self.send(ctx, &msg.msg, &mut rec);
+            self.rec = Some(rec);
+        } else if let Some(ref mut rec) = self.rec {
+            rec.add(msg);
         }
         Self::empty()
     }
