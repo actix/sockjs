@@ -1,13 +1,13 @@
 [package]
 name = "sockjs"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["Nikolay Kim <fafhrd91@gmail.com>"]
 description = "SockJS server for Actix"
 readme = "README.md"
 keywords = ["actor", "http", "websockets", "sockjs"]
 homepage = "https://github.com/fafhrd91/actix-sockjs"
 repository = "https://github.com/fafhrd91/actix-sockjs.git"
-documentation = "https://fafhrd91.github.io/actix-sockjs/actix-sockjs/"
+documentation = "https://docs.rs/actix-sockjs/"
 categories = ["network-programming", "asynchronous"]
 license = "Apache-2.0"
 exclude = [".gitignore", ".travis.yml", ".cargo/config", "appveyor.yml"]

@@ -29,7 +29,7 @@ const PRELUDE2: &'static str = r#";
     window.onload = function() {c.stop();};
   </script>"#;
 
-const PRELUDE3: [u8; 1024] = [b' '; 1024];
+const PRELUDE3: &'static [u8] = &[b' '; 1024];
 
 
 pub struct HTMLFile<S, SM>
@@ -87,7 +87,7 @@ impl<S, SM> HTMLFile<S, SM>
             ctx.write(PRELUDE1);
             ctx.write(callback);
             ctx.write(PRELUDE2);
-            ctx.write(&PRELUDE3[..]);
+            ctx.write(PRELUDE3);
 
             // init transport, but aftre prelude only
             let session = req.match_info().get("session").unwrap().to_owned();
