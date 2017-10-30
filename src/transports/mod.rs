@@ -54,7 +54,7 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
             }
             ctx.state().send(Release{ses: rec});
         }
-        ctx.terminate()
+        ctx.stop()
     }
 
     /// Send sockjs frame

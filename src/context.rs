@@ -38,6 +38,7 @@ impl<A> ActorContext for SockJSContext<A> where A: Session<Context=Self>
 {
     /// Stop actor execution
     fn stop(&mut self) {
+        self.items.stop();
         self.address.close();
         if self.state == ActorState::Running {
             self.state = ActorState::Stopping;
@@ -76,6 +77,10 @@ impl<A> AsyncContext<A> for SockJSContext<A> where A: Session<Context=Self>
     fn cancel_future(&mut self, handle: SpawnHandle) -> bool {
         self.modified = true;
         self.items.cancel_future(handle)
+    }
+
+    fn cancel_future_on_stop(&mut self, handle: SpawnHandle) {
+        self.items.cancel_future_on_stop(handle)
     }
 }
 

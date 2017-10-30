@@ -139,7 +139,7 @@ impl<S, SM> Handler<PayloadItem, PayloadError> for XhrSend<S, SM>
     where S: Session, SM: SessionManager<S>
 {
     fn error(&mut self, _: PayloadError, ctx: &mut HttpContext<Self>) {
-        ctx.terminate();
+        ctx.stop();
     }
 
     fn handle(&mut self, msg: PayloadItem, ctx: &mut HttpContext<Self>)

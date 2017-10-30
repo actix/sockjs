@@ -29,7 +29,7 @@ impl<S, SM> Actor for RawWebsocket<S, SM> where S: Session, SM: SessionManager<S
             rec.close();
             ctx.state().send(Release{ses: rec});
         }
-        ctx.terminate()
+        ctx.stop()
     }
 }
 
