@@ -82,8 +82,11 @@ fn main() {
                 sockjs::SockJS::<Echo, _>::new(sm.clone()).disable_transports(vec!["websocket"]))
             .route_handler(
                 "/cookie_needed_echo",
-                sockjs::SockJS::<Echo, _>::new(sm).cookie_needed(true)))
-        .serve::<_, ()>("127.0.0.1:8081").unwrap();
+                sockjs::SockJS::<Echo, _>::new(sm).cookie_needed(true))
+            .resource("/exit.html", |r| r.handler(Method::GET, |_, _, _| {
+                Arbiter::system().send(msgs::SystemExit(0));
+                Ok(httpcodes::HTTPOk)})))
+        .serve::<_, ()>("127.0.0.1:52081").unwrap();
 
     let _ = sys.run();
 }
