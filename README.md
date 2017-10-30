@@ -34,14 +34,17 @@ use sockjs::{Message, Session, CloseReason, SockJSManager, SockJSContext};
 
 struct Chat;
 
+/// Sockjs session has to use `SockJSContext` context
 impl Actor for Chat {
     type Context = SockJSContext<Self>;
 }
 
+/// Session has to implement `Default` trait
 impl Default for Chat {
     fn default() -> Chat { Chat }
 }
 
+/// Sockjs session trait implementation
 impl Session for Chat {
     fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
         ctx.broadcast("Someone joined.")
@@ -51,6 +54,7 @@ impl Session for Chat {
     }
 }
 
+/// Session has to be able to handle `sockjs::Message` messages
 impl Handler<Message> for Chat {
     fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
               -> Response<Self, Message>
@@ -65,7 +69,7 @@ impl Handler<Message> for Chat {
 fn main() {
     let sys = actix::System::new("sockjs-chat");
 
-    // SockJS session manager
+    // SockJS sessions manager
     let sm: SyncAddress<_> = SockJSManager::<Chat>::start_default();
 
     HttpServer::new(
