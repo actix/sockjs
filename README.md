@@ -20,6 +20,18 @@ To use `sockjs`, add this to your `Cargo.toml`:
 sockjs = { git = "https://github.com/fafhrd91/actix-sockjs.git" }
 ```
 
+## upported transports
+
+* [websocket](http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-10)
+* [xhr-streaming](https://secure.wikimedia.org/wikipedia/en/wiki/XMLHttpRequest#Cross-domain_requests)
+* [xhr-polling](https://secure.wikimedia.org/wikipedia/en/wiki/XMLHttpRequest#Cross-domain_requests)
+* [iframe-xhr-polling](https://developer.mozilla.org/en/DOM/window.postMessage)
+* iframe-eventsource ([EventSource](http://dev.w3.org/html5/eventsource/) used from an [iframe via
+  postMessage](https://developer.mozilla.org/en/DOM/window.postMessage>))
+* iframe-htmlfile ([HtmlFile](http://cometdaily.com/2007/11/18/ie-activexhtmlfile-transport-part-ii/)
+  used from an [iframe via postMessage](https://developer.mozilla.org/en/DOM/window.postMessage>).)
+* [jsonp-polling](https://secure.wikimedia.org/wikipedia/en/wiki/JSONP)
+
 
 ## Simple chat example
 
