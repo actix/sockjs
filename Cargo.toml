@@ -10,7 +10,7 @@ repository = "https://github.com/fafhrd91/actix-sockjs.git"
 documentation = "https://docs.rs/actix-sockjs/"
 categories = ["network-programming", "asynchronous"]
 license = "Apache-2.0"
-exclude = [".gitignore", ".travis.yml", ".cargo/config", "appveyor.yml"]
+exclude = [".gitignore", ".travis.yml", ".cargo/config", "appveyor.yml", "/protocol/**"]
 build = "build.rs"
 
 [lib]
