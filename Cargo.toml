@@ -22,6 +22,8 @@ name = "sockjs"
 path = "src/lib.rs"
 
 [dependencies]
+bytes = "0.4"
+futures = "0.1"
 time = "0.1"
 http = "0.1"
 md5 = "0.3"
@@ -35,22 +37,14 @@ serde = "1.0"
 serde_json = "1.0"
 serde_derive = "1.0"
 
-# tokio
-bytes = "0.4"
-futures = "0.1"
-
 # other
 log = "0.3"
 
 [dependencies.actix]
 version = ">=0.3.1"
-#path = "../actix"
-#git = "https://github.com/actix/actix.git"
 
 [dependencies.actix-web]
 version = "0.2"
-#path = "../actix-web"
-#git = "https://github.com/actix/actix-web.git"
 
 [profile.release]
 lto = true
