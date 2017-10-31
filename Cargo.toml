@@ -11,7 +11,7 @@ documentation = "https://docs.rs/actix-sockjs/"
 categories = ["network-programming", "asynchronous"]
 license = "Apache-2.0"
 exclude = [".gitignore", ".travis.yml", ".cargo/config", "appveyor.yml"]
-# build = "build.rs"
+build = "build.rs"
 
 [lib]
 name = "sockjs"
@@ -39,14 +39,14 @@ futures = "0.1"
 log = "0.3"
 
 [dependencies.actix]
-#version = ">=0.3.1"
+version = ">=0.3.1"
 #path = "../actix"
-git = "https://github.com/actix/actix.git"
+#git = "https://github.com/actix/actix.git"
 
 [dependencies.actix-web]
-#version = "0.1"
+version = "0.2"
 #path = "../actix-web"
-git = "https://github.com/actix/actix-web.git"
+#git = "https://github.com/actix/actix-web.git"
 
 [profile.release]
 lto = true

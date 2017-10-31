@@ -17,7 +17,7 @@ To use `sockjs`, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sockjs = { git = "https://github.com/fafhrd91/actix-sockjs.git" }
+sockjs = "0.1"
 ```
 
 ## Supported transports
@@ -46,7 +46,7 @@ use sockjs::{Message, Session, CloseReason, SockJSManager, SockJSContext};
 
 struct Chat;
 
-/// Sockjs session has to use `SockJSContext` context
+/// `SockJSContext` context is required for sockjs session
 impl Actor for Chat {
     type Context = SockJSContext<Self>;
 }
@@ -56,7 +56,7 @@ impl Default for Chat {
     fn default() -> Chat { Chat }
 }
 
-/// Sockjs session trait implementation
+/// Sockjs session trait
 impl Session for Chat {
     fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
         ctx.broadcast("Someone joined.")
@@ -71,7 +71,7 @@ impl Handler<Message> for Chat {
     fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
               -> Response<Self, Message>
     {
-        // send message to all sessions
+        // broadcast message to all sessions
         ctx.broadcast(msg);
         Self::empty()
     }
