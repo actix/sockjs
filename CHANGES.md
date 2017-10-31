@@ -1,6 +1,6 @@
-# CHANGES
+# Changes
 
 
-## 0.1.0 (2017-10-30)
+## 0.1.0 (2017-10-31)
 
 * First release
