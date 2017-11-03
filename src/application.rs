@@ -183,6 +183,7 @@ impl<A, SM, S> RouteHandler<S> for SockJS<A, SM, S>
                         if sid.is_empty() || sid.contains('.') || server.contains('.') {
                             return Task::reply(httpcodes::HTTPNotFound)
                         }
+                        trace!("sockjs transport: {}, session: {}, srv: {}", tr, sid, server);
                     }
 
                     let res = {

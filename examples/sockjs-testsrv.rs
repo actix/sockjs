@@ -62,7 +62,9 @@ impl Handler<Message> for Close {
 
 
 fn main() {
-    ::std::env::set_var("RUST_LOG", "actix_web=info");
+    if ::std::env::var("RUST_LOG").is_err() {
+        ::std::env::set_var("RUST_LOG", "actix_web=info");
+    }
     let _ = env_logger::init();
 
     let sys = actix::System::new("sockjs-example");
