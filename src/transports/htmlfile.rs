@@ -11,7 +11,7 @@ use utils::SockjsHeaders;
 use session::Session;
 use manager::{Broadcast, Record, SessionManager};
 
-use super::{MAXSIZE, Transport, SendResult};
+use super::{Transport, SendResult};
 
 const PRELUDE1: &'static str = r#"
 <!doctype html>
@@ -45,14 +45,15 @@ pub struct HTMLFile<S, SM>
 impl<S, SM> HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn hb(&self, ctx: &mut HttpContext<Self>) {
+    // start heartbeats
+    fn hb(&self, ctx: &mut HttpContext<Self, SyncAddress<SM>>) {
         ctx.run_later(Duration::new(5, 0), |act, ctx| {
             act.send_heartbeat(ctx);
             act.hb(ctx);
         });
     }
 
-    fn write(&mut self, s: &str, ctx: &mut HttpContext<Self>) {
+    fn write(&mut self, s: &str, ctx: &mut HttpContext<Self, SyncAddress<SM>>) {
         let b = serde_json::to_string(s).unwrap();
         self.size += b.len() + 25;
         ctx.write("<script>\np(");
@@ -60,52 +61,49 @@ impl<S, SM> HTMLFile<S, SM>
         ctx.write(");\n</script>\r\n");
     }
 
-    pub fn handle(req: &mut HttpRequest,ctx: &mut HttpContext<Self>, maxsize: usize)
-                  -> RouteResult<Self>
-    {
+    pub fn init(req: HttpRequest<SyncAddress<SM>>, maxsize: usize) -> Result<HttpResponse> {
         lazy_static! {
             static ref CHECK: Regex = Regex::new(r"^[a-zA-Z0-9_\.]+$").unwrap();
         }
         if *req.method() != Method::GET {
-            return Reply::reply(httpcodes::HTTPNotFound)
+            return Ok(httpcodes::HTTPNotFound.into())
         }
 
-        if let Some(callback) = req.query().remove("c") {
+        if let Some(callback) = req.query().get("c").map(|s| s.to_owned()) {
             if !CHECK.is_match(&callback) {
-                return Reply::reply(httpcodes::HTTPInternalServerError.with_body(
+                return Ok(httpcodes::HTTPInternalServerError.with_body(
                     "invalid \"callback\" parameter"))
             }
 
-            let _ = req.load_cookies();
-            ctx.start(httpcodes::HTTPOk
-                      .builder()
-                      .force_close()
-                      .content_type("text/html; charset=UTF-8")
-                      .sockjs_no_cache()
-                      .sockjs_session_cookie(req)
-                      .body(Body::Streaming));
+            let session = req.match_info().get("session").unwrap().to_owned();
+            let mut resp = httpcodes::HTTPOk.build()
+                .force_close()
+                .content_type("text/html; charset=UTF-8")
+                .sockjs_no_cache()
+                .sockjs_session_cookie(&req)
+                .take();
+
+            let mut ctx = HttpContext::new(
+                req, HTMLFile{s: PhantomData,
+                              sm: PhantomData,
+                              size: 0, rec: None, maxsize: maxsize});
             ctx.write(PRELUDE1);
             ctx.write(callback);
             ctx.write(PRELUDE2);
             ctx.write(PRELUDE3);
 
             // init transport, but aftre prelude only
-            let session = req.match_info().get("session").unwrap().to_owned();
-            ctx.drain().map(move |_, _, ctx| {
-                ctx.run_later(Duration::new(0, 800_000), move |act, ctx| {
-                    act.hb(ctx);
-                    act.init_transport(session, ctx);
-                });
-            }).wait(ctx);
+            ctx.drain()
+                .map(move |_, _, ctx| {
+                    ctx.run_later(Duration::new(0, 1_200_000), move |act, ctx| {
+                        act.hb(ctx);
+                        act.init_transport(session, ctx);
+                    });
+                }).wait(&mut ctx);
 
-            Reply::async(
-                HTMLFile{s: PhantomData,
-                         sm: PhantomData,
-                         size: 0, rec: None, maxsize: maxsize})
+            Ok(resp.body(ctx)?)
         } else {
-            Reply::reply(
-                httpcodes::HTTPInternalServerError.with_body("\"callback\" parameter required")
-            )
+            Ok(httpcodes::HTTPInternalServerError.with_body("\"callback\" parameter required"))
         }
     }
 }
@@ -114,9 +112,9 @@ impl<S, SM> HTMLFile<S, SM>
 impl<S, SM> Actor for HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self>;
+    type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
+    fn stopping(&mut self, ctx: &mut Self::Context) {
         self.stop(ctx);
     }
 }
@@ -125,7 +123,7 @@ impl<S, SM> Actor for HTMLFile<S, SM>
 impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, rec: &mut Record)
+    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, rec: &mut Record)
             -> SendResult
     {
         match *msg {
@@ -162,27 +160,16 @@ impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
         }
     }
 
-    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode) {
+    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode) {
         self.write(&format!("c[{},{:?}]", code.num(), code.reason()), ctx);
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>) {
+    fn send_heartbeat(&mut self, ctx: &mut Self::Context) {
         self.write("h", ctx);
     }
 
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
-    }
-}
-
-impl<S, SM> Route for HTMLFile<S, SM>
-    where S: Session, SM: SessionManager<S>,
-{
-    type State = SyncAddress<SM>;
-
-    fn request(req: &mut HttpRequest, _: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self> {
-        HTMLFile::handle(req, ctx, MAXSIZE)
     }
 }
 
@@ -192,7 +179,7 @@ impl<S, SM> StreamHandler<Frame> for HTMLFile<S, SM>
 impl<S, SM> Handler<Frame> for HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
@@ -206,8 +193,7 @@ impl<S, SM> Handler<Frame> for HTMLFile<S, SM>
 impl<S, SM> Handler<Broadcast> for HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
-              -> Response<Self, Broadcast>
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Response<Self, Broadcast>
     {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg.msg, &mut rec);

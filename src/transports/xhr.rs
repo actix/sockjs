@@ -25,9 +25,9 @@ pub struct Xhr<S, SM>
 impl<S, SM> Actor for Xhr<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self>;
+    type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
+    fn stopping(&mut self, ctx: &mut Self::Context) {
         self.stop(ctx)
     }
 }
@@ -36,8 +36,7 @@ impl<S, SM> Actor for Xhr<S, SM>
 impl<S, SM> Transport<S, SM> for Xhr<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
-            -> SendResult
+    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult
     {
         match *msg {
             Frame::Heartbeat => {
@@ -70,14 +69,12 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
         SendResult::Stop
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>)
-    {
+    fn send_heartbeat(&mut self, ctx: &mut Self::Context) {
         ctx.write("h\n");
         ctx.write_eof();
     }
 
-    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode)
-    {
+    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode) {
         ctx.write(format!("c[{},{:?}]\n", code.num(), code.reason()));
         ctx.write_eof();
     }
@@ -87,48 +84,45 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
     }
 }
 
-impl<S, SM> Route for Xhr<S, SM>
+impl<S, SM> Xhr<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    type State = SyncAddress<SM>;
-
-    fn request(req: &mut HttpRequest, _: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self>
+    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
     {
         if *req.method() == Method::OPTIONS {
-            let _ = req.load_cookies();
-            return Reply::reply(
+            return Ok(
                 httpcodes::HTTPNoContent
-                    .builder()
+                    .build()
                     .content_type("application/jsonscript; charset=UTF-8")
                     .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
                     .sockjs_cache_headers()
                     .sockjs_cors_headers(req.headers())
-                    .sockjs_session_cookie(req)
-                    .finish())
+                    .sockjs_session_cookie(&req)
+                    .finish()?)
         }
         else if *req.method() != Method::POST {
-            return Reply::reply(httpcodes::HTTPNotFound)
+            return Ok(httpcodes::HTTPNotFound.into())
         }
 
-        let _ = req.load_cookies();
-        ctx.start(httpcodes::HTTPOk
-                  .builder()
-                  .header(header::CONTENT_TYPE, "application/javascript; charset=UTF-8")
-                  .force_close()
-                  .sockjs_no_cache()
-                  .sockjs_session_cookie(req)
-                  .sockjs_cors_headers(req.headers())
-                  .body(Body::Streaming));
-
         let session = req.match_info().get("session").unwrap().to_owned();
+        let mut resp = httpcodes::HTTPOk
+            .build()
+            .header(header::CONTENT_TYPE, "application/javascript; charset=UTF-8")
+            .force_close()
+            .sockjs_no_cache()
+            .sockjs_session_cookie(&req)
+            .sockjs_cors_headers(req.headers())
+            .take();
+
+        let mut ctx = HttpContext::from_request(req);
+
+        // init transport
         let mut transport = Xhr{s: PhantomData,
                                 sm: PhantomData,
                                 rec: None};
-        // init transport
-        transport.init_transport(session, ctx);
+        transport.init_transport(session, &mut ctx);
 
-        Reply::async(transport)
+        Ok(resp.body(ctx.actor(transport))?)
     }
 }
 
@@ -138,7 +132,7 @@ impl<S, SM> StreamHandler<Frame> for Xhr<S, SM>
 impl<S, SM> Handler<Frame> for Xhr<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
@@ -152,9 +146,7 @@ impl<S, SM> Handler<Frame> for Xhr<S, SM>
 impl<S, SM> Handler<Broadcast> for Xhr<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
-              -> Response<Self, Broadcast>
-    {
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Response<Self, Broadcast> {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg.msg, &mut rec);
             self.rec = Some(rec);

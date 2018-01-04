@@ -19,12 +19,34 @@ pub struct Websocket<S, SM>
     rec: Option<Record>,
 }
 
+impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
+{
+    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
+    {
+        let mut resp = ws::handshake(&req)?;
+        let stream = ws::WsStream::new(req.payload().readany());
+        let session = req.match_info().get("session").unwrap().to_owned();
+
+        let mut ctx = HttpContext::from_request(req);
+        ctx.add_stream(stream);
+
+        // init transport
+        let mut tr = Websocket{s: PhantomData,
+                               sm: PhantomData,
+                               rec: None};
+        println!("session");
+        tr.init_transport(session, &mut ctx);
+
+        Ok(resp.body(ctx.actor(tr))?)
+    }
+}
+
 // Http actor implementation
 impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self>;
+    type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
+    fn stopping(&mut self, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             rec.close();
             ctx.state().send(Release{ses: rec});
@@ -36,8 +58,7 @@ impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
 // Transport implementation
 impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
-            -> SendResult
+    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult
     {
         match *msg {
             Frame::Heartbeat => {
@@ -53,6 +74,7 @@ impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionM
                 // ctx.write(format!("a{}\n", s));
             }
             Frame::Open => {
+                println!("test");
                 ws::WsWriter::text(ctx, "o");
             },
             Frame::Close(code) => {
@@ -64,38 +86,16 @@ impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionM
         SendResult::Continue
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>) {
+    fn send_heartbeat(&mut self, ctx: &mut Self::Context) {
         ws::WsWriter::text(ctx, "h");
     }
 
-    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode) {
+    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode) {
         ws::WsWriter::text(ctx, &format!("c[{},{:?}]", code.num(), code.reason()));
     }
 
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
-    }
-}
-
-impl<S, SM> Route for Websocket<S, SM>
-    where S: Session, SM: SessionManager<S>,
-{
-    type State = SyncAddress<SM>;
-
-    fn request(req: &mut HttpRequest, payload: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self>
-    {
-        ctx.start(ws::handshake(req)?);
-        ctx.add_stream(ws::WsStream::new(payload));
-
-        let mut tr = Websocket{s: PhantomData,
-                               sm: PhantomData,
-                               rec: None};
-        // init transport
-        let session = req.match_info().get("session").unwrap().to_owned();
-        tr.init_transport(session, ctx);
-
-        Reply::async(tr)
     }
 }
 
@@ -105,7 +105,7 @@ impl<S, SM> StreamHandler<Frame> for Websocket<S, SM>
 impl<S, SM> Handler<Frame> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
@@ -119,7 +119,7 @@ impl<S, SM> Handler<Frame> for Websocket<S, SM>
 impl<S, SM> Handler<Broadcast> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context)
               -> Response<Self, Broadcast>
     {
         if let Some(mut rec) = self.rec.take() {
@@ -136,7 +136,7 @@ impl<S, SM> StreamHandler<ws::Message> for Websocket<S, SM>
 impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: ws::Message, ctx: &mut HttpContext<Self>)
+    fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context)
               -> Response<Self, ws::Message>
     {
         // process websocket messages

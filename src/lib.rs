@@ -19,6 +19,7 @@ extern crate serde_json;
 extern crate serde_derive;
 
 extern crate http;
+#[macro_use]
 extern crate actix;
 extern crate actix_web;
 

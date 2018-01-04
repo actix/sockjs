@@ -19,6 +19,12 @@ impl Frame {
             _ => false,
         }
     }
+    pub fn into_message(self) -> String {
+        match self {
+            Frame::Message(msg) => msg,
+            _ => panic!(),
+        }
+    }
 }
 
 impl ResponseType for Frame {

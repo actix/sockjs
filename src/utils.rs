@@ -1,5 +1,7 @@
-use actix_web::{Cookie, HttpRequest, HttpResponse, HttpResponseBuilder};
-use http::Error;
+use time;
+use actix_web::HttpRequest;
+use actix_web::headers::Cookie;
+use actix_web::dev::HttpResponseBuilder;
 use http::header::HeaderMap;
 use http::header::{EXPIRES, ORIGIN, CACHE_CONTROL,
                    ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -8,10 +10,6 @@ use http::header::{EXPIRES, ORIGIN, CACHE_CONTROL,
                    ACCESS_CONTROL_ALLOW_CREDENTIALS,
                    ACCESS_CONTROL_MAX_AGE,
                    ACCESS_CONTROL_REQUEST_HEADERS};
-use serde::Serialize;
-use serde_json;
-use time;
-
 
 const CACHE_CONTROL_VAL: &'static str =
     "no-store, no-cache, no-transform, must-revalidate, max-age=0";
@@ -39,8 +37,6 @@ impl Info {
 
 pub(crate) trait SockjsHeaders {
 
-    fn json_body<T: Serialize>(&mut self, body: T) -> Result<HttpResponse, Error>;
-
     fn sockjs_allow_methods(&mut self) -> &mut Self;
 
     fn sockjs_no_cache(&mut self) -> &mut Self;
@@ -49,19 +45,14 @@ pub(crate) trait SockjsHeaders {
 
     fn sockjs_cors_headers(&mut self, headers: &HeaderMap) -> &mut Self;
 
-    fn sockjs_session_cookie(&mut self, req: &HttpRequest) -> &mut Self;
+    fn sockjs_session_cookie<S>(&mut self, req: &HttpRequest<S>) -> &mut Self;
 
 }
 
 
 impl SockjsHeaders for HttpResponseBuilder {
 
-    fn json_body<T: Serialize>(&mut self, body: T) -> Result<HttpResponse, Error> {
-        let serialized = serde_json::to_string(&body).unwrap();
-        self.body(serialized.into_bytes())
-    }
-
-    fn sockjs_session_cookie(&mut self, req: &HttpRequest) -> &mut Self {
+    fn sockjs_session_cookie<S>(&mut self, req: &HttpRequest<S>) -> &mut Self {
         let builder = if let Some(cookie) = req.cookie("JSESSIONID") {
             Cookie::build("JSESSIONID", cookie.value().to_owned())
         } else {

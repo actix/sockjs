@@ -54,21 +54,24 @@ fn main() {
     let sm: SyncAddress<_> = SockJSManager::<Chat>::start_default();
 
     HttpServer::new(
-        Application::default("/")
-            .middleware(Logger::new(None))
-            .route_handler(
-                // Sockjs route handler
-                "/sockjs/", sockjs::SockJS::<Chat, _>::new(sm.clone()))
-            .resource("/", |r| r.handler(Method::GET, |_, _, _| {
-                let mut file = File::open("examples/chat.html")?;
-                let mut content = String::new();
-                file.read_to_string(&mut content)?;
+        move || {
+            let s = sm.clone();
+            Application::new()
+                .middleware(middleware::Logger::default())
+                .handler(
+                    // Sockjs route handler
+                    "/sockjs/", sockjs::SockJS::new(s.clone()))
+                .resource("/", |r| r.method(Method::GET).f(|_| -> Result<HttpResponse> {
+                    let mut file = File::open("examples/chat.html")?;
+                    let mut content = String::new();
+                    file.read_to_string(&mut content)?;
 
                 Ok(httpcodes::HTTPOk
-                   .builder()
+                   .build()
                    .body(content)?)
-            })))
-        .serve::<_, ()>("127.0.0.1:8080").unwrap();
+                }))})
+        .bind("127.0.0.1:8080").unwrap()
+        .start();
 
     let _ = sys.run();
 }

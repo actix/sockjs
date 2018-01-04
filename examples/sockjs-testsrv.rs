@@ -73,22 +73,24 @@ fn main() {
     let cl: SyncAddress<_> = SockJSManager::<Close>::start_default();
 
     HttpServer::new(
-        Application::default("/")
-            .middleware(Logger::new(None))
-            .route_handler(
-                "/echo", sockjs::SockJS::<Echo, _>::new(sm.clone()).maxsize(4096))
-            .route_handler(
-                "/close", sockjs::SockJS::<Close, _>::new(cl))
-            .route_handler(
+        move || Application::new()
+            .middleware(middleware::Logger::default())
+            .handler(
+                "/echo", sockjs::SockJS::new(sm.clone()).maxsize(4096))
+            .handler(
+                "/close", sockjs::SockJS::new(cl.clone()))
+            .handler(
                 "/disabled_websocket_echo",
-                sockjs::SockJS::<Echo, _>::new(sm.clone()).disable_transports(vec!["websocket"]))
-            .route_handler(
+                sockjs::SockJS::new(sm.clone()).disable_transports(vec!["websocket"]))
+            .handler(
                 "/cookie_needed_echo",
-                sockjs::SockJS::<Echo, _>::new(sm).cookie_needed(true))
-            .resource("/exit.html", |r| r.handler(Method::GET, |_, _, _| {
+                sockjs::SockJS::new(sm.clone()).cookie_needed(true))
+            .resource("/exit.html", |r| r.f(|_| {
                 Arbiter::system().send(msgs::SystemExit(0));
-                Ok(httpcodes::HTTPOk)})))
-        .serve::<_, ()>("127.0.0.1:52081").unwrap();
+                httpcodes::HTTPOk})))
+        .keep_alive(Some(0))
+        .bind("127.0.0.1:52081").unwrap()
+        .start();
 
     let _ = sys.run();
 }

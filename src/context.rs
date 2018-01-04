@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::collections::VecDeque;
 
 use actix::dev::*;
+use serde_json;
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot::Sender;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
@@ -18,6 +19,22 @@ pub enum SockJSChannel {
     Closed(CloseReason),
 }
 
+enum BufItem {
+    Message(String),
+    Messages(Vec<String>),
+    Frame(Frame),
+}
+
+impl BufItem {
+    fn is_msg(&self) -> bool {
+        match *self {
+            BufItem::Message(_) | BufItem::Messages(_) => true,
+            _ => false,
+        }
+    }
+}
+
+
 /// Sockjs session context
 pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
 {
@@ -30,7 +47,7 @@ pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
     address: ActorAddressCell<A>,
     rx: UnboundedReceiver<SockJSChannel>,
     tx: Option<UnboundedSender<Frame>>,
-    buf: VecDeque<Frame>,
+    buf: VecDeque<BufItem>,
     sm: SyncAddress<SockJSManager<A>>,
 }
 
@@ -109,15 +126,17 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
     pub fn send<M>(&mut self, message: M) where M: Into<Message>
     {
         let msg = Frame::Message(message.into().0);
-        if let Some(ref mut tx) = self.tx {
+
+        let msg = if let Some(ref mut tx) = self.tx {
             match tx.unbounded_send(msg) {
                 Ok(()) => return,
-                Err(err) => self.buf.push_back(err.into_inner())
+                Err(err) => err.into_inner()
             }
         } else {
-            self.buf.push_back(msg);
+            self.add_to_buf(msg);
             return
-        }
+        };
+        self.add_to_buf(msg);
         self.tx.take();
     }
 
@@ -130,19 +149,46 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
     /// Close session
     pub fn close(&mut self) {
         let frm = Frame::Close(CloseCode::GoAway);
-        if let Some(ref mut tx) = self.tx {
+        let msg = if let Some(ref mut tx) = self.tx {
             match tx.unbounded_send(frm) {
                 Ok(()) => return,
-                Err(err) => self.buf.push_back(err.into_inner())
+                Err(err) => err.into_inner()
             }
         } else {
-            self.buf.push_back(frm);
-        }
+            frm
+        };
+        self.add_to_buf(msg);
     }
 
     /// Check if transport is connected
     pub fn connected(&mut self) -> bool {
         self.tx.is_some()
+    }
+
+    fn add_to_buf(&mut self, msg: Frame) {
+        let is_msg = if let Some(front) = self.buf.back() {
+            front.is_msg()} else { false };
+
+        if is_msg && msg.is_msg() {
+            let item = self.buf.pop_back().unwrap();
+            let vec = match item {
+                BufItem::Message(m) => {
+                    vec![m, msg.into_message()]
+                },
+                BufItem::Messages(mut vec) => {
+                    vec.push(msg.into_message());
+                    vec
+                },
+                _ => unreachable!(),
+            };
+            self.buf.push_back(BufItem::Messages(vec));
+        } else {
+            if msg.is_msg() {
+                self.buf.push_back(BufItem::Message(msg.into_message()));
+            } else {
+                self.buf.push_back(BufItem::Frame(msg));
+            }
+        }
     }
 }
 
@@ -218,7 +264,19 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
                         match msg {
                             SockJSChannel::Acquired(tx) => {
                                 while let Some(msg) = self.buf.pop_front() {
-                                    let _ = tx.unbounded_send(msg);
+                                    match msg {
+                                        BufItem::Message(msg) => {
+                                            let _ = tx.unbounded_send(Frame::Message(msg));
+                                        },
+                                        BufItem::Messages(msg) => {
+                                            let _ = tx.unbounded_send(
+                                                Frame::MessageVec(
+                                                    serde_json::to_string(&msg).unwrap()));
+                                        },
+                                        BufItem::Frame(msg) => {
+                                            let _ = tx.unbounded_send(msg);
+                                        },
+                                    }
                                 };
                                 self.tx = Some(tx);
                                 self.act.acquired(ctx);

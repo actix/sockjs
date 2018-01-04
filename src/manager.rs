@@ -33,36 +33,22 @@ impl ResponseType for Acquire {
 }
 
 /// Release message
+#[derive(Message)]
 pub struct Release {
     pub ses: Record,
 }
 
-impl ResponseType for Release {
-    type Item = ();
-    type Error = ();
-}
-
 /// Session message
-#[derive(Debug)]
+#[derive(Message, Debug)]
 pub struct SessionMessage {
     pub sid: Arc<String>,
     pub msg: Message,
 }
 
-impl ResponseType for SessionMessage {
-    type Item = ();
-    type Error = ();
-}
-
 /// Broadcast message to all sessions
-#[derive(Debug)]
+#[derive(Debug, Message)]
 pub struct Broadcast {
     pub msg: Arc<Frame>,
-}
-
-impl ResponseType for Broadcast {
-    type Item = ();
-    type Error = ();
 }
 
 impl Broadcast {
@@ -77,6 +63,7 @@ impl Clone for Broadcast {
     }
 }
 
+#[derive(Debug)]
 pub enum RecordEntry {
     Frame(Frame),
     Arc(Arc<Frame>),

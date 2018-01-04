@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use std::sync::Arc;
 use std::marker::PhantomData;
 
@@ -6,6 +7,7 @@ use actix_web::*;
 use regex::Regex;
 use serde_json;
 use bytes::BytesMut;
+use futures::future::{ok, Future, Either};
 use percent_encoding::percent_decode;
 
 use protocol::{Frame, CloseCode};
@@ -29,9 +31,9 @@ pub struct JSONPolling<S, SM>
 impl<S, SM> Actor for JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self>;
+    type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
+    fn stopping(&mut self, ctx: &mut Self::Context) {
         self.stop(ctx);
     }
 }
@@ -39,7 +41,7 @@ impl<S, SM> Actor for JSONPolling<S, SM>
 impl<S, SM>  JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    fn write(&self, s: &str, ctx: &mut HttpContext<Self>) {
+    fn write(&self, s: &str, ctx: &mut HttpContext<Self, SyncAddress<SM>>) {
         ctx.write(format!("/**/{}({});\r\n",
                           self.callback, serde_json::to_string(s).unwrap()))
     }
@@ -49,7 +51,7 @@ impl<S, SM>  JSONPolling<S, SM>
 impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
+    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record)
             -> SendResult
     {
         match *msg {
@@ -78,13 +80,13 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
         SendResult::Stop
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>)
+    fn send_heartbeat(&mut self, ctx: &mut Self::Context)
     {
         self.write("h\n", ctx);
         ctx.write_eof();
     }
 
-    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode)
+    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode)
     {
         self.write(&format!("c[{},{:?}]", code.num(), code.reason()), ctx);
         ctx.write_eof();
@@ -95,51 +97,47 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
     }
 }
 
-impl<S, SM> Route for JSONPolling<S, SM>
+impl<S, SM> JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    type State = SyncAddress<SM>;
-
-    fn request(req: &mut HttpRequest, _: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self>
+    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
     {
         lazy_static! {
             static ref CHECK: Regex = Regex::new(r"^[a-zA-Z0-9_\.]+$").unwrap();
         }
 
         if *req.method() != Method::GET {
-            return Reply::reply(httpcodes::HTTPNotFound)
+            return Ok(httpcodes::HTTPNotFound.into())
         }
 
-        if let Some(callback) = req.query().remove("c") {
+        if let Some(callback) = req.query().get("c").map(|s| s.to_owned()) {
             if !CHECK.is_match(&callback) {
-                return Reply::reply(httpcodes::HTTPInternalServerError.with_body(
-                    "invalid \"callback\" parameter"))
+                return Ok(
+                    httpcodes::HTTPInternalServerError
+                        .with_body("invalid \"callback\" parameter"))
             }
-            
-            let _ = req.load_cookies();
-            ctx.start(httpcodes::HTTPOk
-                      .builder()
-                      .content_type("application/javascript; charset=UTF-8")
-                      .force_close()
-                      .sockjs_no_cache()
-                      .sockjs_session_cookie(req)
-                      .sockjs_cors_headers(req.headers())
-                      .body(Body::Streaming));
 
             let session = req.match_info().get("session").unwrap().to_owned();
+            let mut resp = httpcodes::HTTPOk
+                .build()
+                .content_type("application/javascript; charset=UTF-8")
+                .force_close()
+                .sockjs_no_cache()
+                .sockjs_session_cookie(&req)
+                .sockjs_cors_headers(req.headers())
+                .take();
+
+            let mut ctx = HttpContext::from_request(req);
             let mut transport = JSONPolling{s: PhantomData,
                                             sm: PhantomData,
                                             rec: None,
                                             callback: callback};
             // init transport
-            transport.init_transport(session, ctx);
+            transport.init_transport(session, &mut ctx);
 
-            Reply::async(transport)
+            Ok(resp.body(ctx.actor(transport))?)
         } else {
-            Reply::reply(
-                httpcodes::HTTPInternalServerError.with_body("\"callback\" parameter required")
-            )
+            Ok(httpcodes::HTTPInternalServerError.with_body("\"callback\" parameter required"))
         }
     }
 }
@@ -150,7 +148,7 @@ impl<S, SM> StreamHandler<Frame> for JSONPolling<S, SM>
 impl<S, SM> Handler<Frame> for JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
@@ -164,7 +162,7 @@ impl<S, SM> Handler<Frame> for JSONPolling<S, SM>
 impl<S, SM> Handler<Broadcast> for JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context)
               -> Response<Self, Broadcast>
     {
         if let Some(mut rec) = self.rec.take() {
@@ -177,165 +175,107 @@ impl<S, SM> Handler<Broadcast> for JSONPolling<S, SM>
     }
 }
 
-pub struct JSONPollingSend<S, SM>
+#[allow(non_snake_case)]
+pub fn JSONPollingSend<S, SM>(req: HttpRequest<SyncAddress<SM>>)
+                              -> Either<HttpResponse, Box<Future<Item=HttpResponse, Error=Error>>>
     where S: Session, SM: SessionManager<S>,
 {
-    s: PhantomData<S>,
-    sm: PhantomData<SM>,
-    buf: BytesMut,
-    sid: Option<String>,
-    resp: Option<HttpResponse>,
-    urlencoded: bool,
-}
-
-// Http actor implementation
-impl<S, SM> Actor for JSONPollingSend<S, SM>
-    where S: Session,
-          SM: SessionManager<S>,
-{
-    type Context = HttpContext<Self>;
-}
-
-impl<S, SM> Route for JSONPollingSend<S, SM>
-    where S: Session,
-          SM: SessionManager<S>,
-{
-    type State = SyncAddress<SM>;
-
-    fn request(req: &mut HttpRequest, payload: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self>
-    {
-        if *req.method() != Method::POST {
-            Reply::reply(httpcodes::HTTPBadRequest.with_reason("Method is not allowed"))
-        } else {
-            let _ = req.load_cookies();
-            let resp = httpcodes::HTTPOk
-                .builder()
-                .content_type("text/plain; charset=UTF-8")
-                .sockjs_no_cache()
-                .sockjs_session_cookie(req)
-                .body("ok")?;
-            ctx.add_stream(payload);
-
-            Reply::async(JSONPollingSend{
-                s: PhantomData,
-                sm: PhantomData,
-                buf: BytesMut::new(),
-                sid: Some(req.match_info().get("session").unwrap().to_owned()),
-                resp: Some(resp),
-                urlencoded: req.content_type() == "application/x-www-form-urlencoded",
-            })
-        }
+    if *req.method() != Method::POST {
+        Either::A(httpcodes::HTTPBadRequest.with_reason("Method is not allowed"))
+    } else {
+        Either::B(read(req))
     }
+
 }
 
-impl<S, SM> StreamHandler<PayloadItem, PayloadError> for JSONPollingSend<S, SM>
+pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
+                   -> Box<Future<Item=HttpResponse, Error=Error>>
     where S: Session, SM: SessionManager<S>
 {
-    fn finished(&mut self, ctx: &mut Self::Context) {
-        if let Some(sid) = self.sid.take() {
-            let sid = Arc::new(sid);
+    let sid = req.match_info().get("session").unwrap().to_owned();
 
-            // empty message
-            if self.buf.is_empty() {
-                ctx.start(httpcodes::HTTPInternalServerError.with_body("Payload expected."));
-                ctx.write_eof();
-                return
-            }
+    Box::new(
+        req.body().limit(MAXSIZE)
+            .map_err(|e| Error::from(error::ErrorBadRequest(e)))
+            .and_then(move |buf| {
+                let sid = Arc::new(sid);
 
-            // deserialize json
-            let mut msgs: Vec<String> = if self.urlencoded {
-                if self.buf.len() <= 2 || &self.buf[..2] != b"d=" {
-                    ctx.start(
-                        httpcodes::HTTPInternalServerError.with_body("Payload expected."));
-                    ctx.write_eof();
-                    return
-                }
-
-                if let Ok(data) = percent_decode(&self.buf[2..]).decode_utf8() {
-                    match serde_json::from_slice(data.as_ref().as_ref()) {
-                        Ok(msgs) => msgs,
-                        Err(_) => {
-                            ctx.start(
-                                httpcodes::HTTPInternalServerError.with_body(
-                                    "Broken JSON encoding."));
-                            ctx.write_eof();
-                            return
-                        }
-                    }
+                // empty message
+                if buf.is_empty() {
+                    return Either::A(
+                        ok(httpcodes::HTTPInternalServerError.with_body("Payload expected.")))
                 } else {
-                    ctx.start(httpcodes::HTTPInternalServerError.with_body("Payload expected."));
-                    ctx.write_eof();
-                    return
-                }
-            } else {
-                match serde_json::from_slice(&self.buf) {
-                    Ok(msgs) => msgs,
-                    Err(_) => {
-                        ctx.start(
-                            httpcodes::HTTPInternalServerError.with_body(
-                                "Broken JSON encoding."));
-                        ctx.write_eof();
-                        return
+                    // deserialize json
+                    let mut msgs: Vec<String> =
+                        if req.content_type() == "application/x-www-form-urlencoded"
+                    {
+                        if buf.len() <= 2 || &buf[..2] != b"d=" {
+                            return Either::A(
+                                ok(httpcodes::HTTPInternalServerError
+                                   .with_body("Payload expected.")));
+                        }
+
+                        if let Ok(data) = percent_decode(&buf[2..]).decode_utf8() {
+                            match serde_json::from_slice(data.as_ref().as_ref()) {
+                                Ok(msgs) => msgs,
+                                Err(_) => {
+                                    return Either::A(
+                                        ok(httpcodes::HTTPInternalServerError.with_body(
+                                            "Broken JSON encoding.")));
+                                }
+                            }
+                        } else {
+                            return Either::A(
+                                ok(httpcodes::HTTPInternalServerError
+                                   .with_body("Payload expected.")));
+                        }
+                    } else {
+                        match serde_json::from_slice(&buf) {
+                            Ok(msgs) => msgs,
+                            Err(_) => {
+                                return Either::A(
+                                    ok(httpcodes::HTTPInternalServerError.with_body(
+                                        "Broken JSON encoding.")));
+                            }
+                        }
+                    };
+
+                    // do nothing
+                    if msgs.is_empty() {
+                        return Either::A(
+                            ok(httpcodes::HTTPOk.build()
+                               .content_type("text/plain; charset=UTF-8")
+                               .sockjs_no_cache()
+                               .sockjs_session_cookie(&req)
+                               .body("ok").unwrap()));
+                    } else {
+                        let last = msgs.pop().unwrap();
+                        for msg in msgs {
+                            req.state().send(
+                                SessionMessage {
+                                    sid: sid.clone(),
+                                    msg: Message(msg)});
+                        }
+
+                        return Either::B(
+                            req.state().call_fut(SessionMessage { sid: sid.clone(),
+                                                                  msg: Message(last)})
+                                .from_err()
+                                .and_then(move |res| {
+                                    match res {
+                                        Ok(_) => {
+                                            Ok(httpcodes::HTTPOk
+                                               .build()
+                                               .content_type("text/plain; charset=UTF-8")
+                                               .sockjs_no_cache()
+                                               .sockjs_session_cookie(&req)
+                                               .body("ok")
+                                               .unwrap())
+                                        },
+                                        Err(e) => Err(Error::from(error::ErrorNotFound(e))),
+                                    }
+                                }))
                     }
                 }
-            };
-
-            // do nothing
-            if msgs.is_empty() {
-                ctx.start(self.resp.take().unwrap());
-                ctx.write_eof();
-                return
-            } else {
-                let last = msgs.pop().unwrap();
-                for msg in msgs {
-                    ctx.state().send(
-                        SessionMessage {
-                            sid: sid.clone(),
-                            msg: Message(msg)});
-                }
-                ctx.state().call(
-                    self, SessionMessage {
-                        sid: sid.clone(),
-                        msg: Message(last)})
-                    .map(|res, act, ctx| {
-                        match res {
-                            Ok(_) => ctx.start(act.resp.take().unwrap()),
-                            Err(_) => ctx.start(httpcodes::HTTPNotFound),
-                        }
-                        ctx.write_eof();
-                    })
-                    .map_err(|_, _, ctx| {
-                        ctx.start(httpcodes::HTTPNotFound);
-                        ctx.write_eof();
-                    })
-                    .wait(ctx);
-            }
-        }
-    }
-}
-
-impl<S, SM> Handler<PayloadItem, PayloadError> for JSONPollingSend<S, SM>
-    where S: Session, SM: SessionManager<S>
-{
-    fn error(&mut self, _: PayloadError, ctx: &mut HttpContext<Self>) {
-        ctx.terminate();
-    }
-
-    fn handle(&mut self, msg: PayloadItem, ctx: &mut HttpContext<Self>)
-              -> Response<Self, PayloadItem>
-    {
-        let size = self.buf.len() + msg.0.len();
-        if size >= MAXSIZE {
-            ctx.start(
-                httpcodes::HTTPBadRequest
-                    .builder()
-                    .force_close()
-                    .finish());
-            ctx.write_eof();
-        } else {
-            self.buf.extend(msg.0);
-        }
-        Self::empty()
-    }
+            }))
 }

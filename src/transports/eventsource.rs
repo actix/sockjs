@@ -11,7 +11,7 @@ use utils::SockjsHeaders;
 use session::Session;
 use manager::{Broadcast, Record, SessionManager};
 
-use super::{MAXSIZE, Transport, SendResult};
+use super::{Transport, SendResult};
 
 
 pub struct EventSource<S, SM>
@@ -27,39 +27,38 @@ pub struct EventSource<S, SM>
 impl<S, SM> EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn hb(&self, ctx: &mut HttpContext<Self>) {
+    fn hb(&self, ctx: &mut HttpContext<Self, SyncAddress<SM>>) {
         ctx.run_later(Duration::new(5, 0), |act, ctx| {
             act.send_heartbeat(ctx);
             act.hb(ctx);
         });
     }
 
-    pub fn handle(req: &mut HttpRequest,ctx: &mut HttpContext<Self>, maxsize: usize)
-                  -> RouteResult<Self>
+    pub fn init(req: HttpRequest<SyncAddress<SM>>, maxsize: usize) -> Result<HttpResponse>
     {
-        let _ = req.load_cookies();
-        ctx.start(httpcodes::HTTPOk
-                  .builder()
-                  .header(header::CONTENT_TYPE, "text/event-stream")
-                  .force_close()
-                  .sockjs_no_cache()
-                  .sockjs_session_cookie(req)
-                  .body(Body::Streaming));
+        let session = req.match_info().get("session").unwrap().to_owned();
+        let mut resp = httpcodes::HTTPOk.build()
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .force_close()
+            .sockjs_no_cache()
+            .sockjs_session_cookie(&req)
+            .take();
+
+        let mut ctx = HttpContext::new(
+            req, EventSource{s: PhantomData,
+                             sm: PhantomData,
+                             size: 0, rec: None, maxsize: maxsize});
         ctx.write("\r\n");
 
         // init transport, but aftre prelude only
-        let session = req.match_info().get("session").unwrap().to_owned();
         ctx.drain().map(move |_, _, ctx| {
-            ctx.run_later(Duration::new(0, 800_000), move |act, ctx| {
+            ctx.run_later(Duration::new(0, 1_200_000), move |act, ctx| {
                 act.hb(ctx);
                 act.init_transport(session, ctx);
             });
-        }).wait(ctx);
+        }).wait(&mut ctx);
 
-        Reply::async(
-            EventSource{s: PhantomData,
-                        sm: PhantomData,
-                        size: 0, rec: None, maxsize: maxsize})
+        Ok(resp.body(ctx)?)
     }
 }
 
@@ -67,9 +66,9 @@ impl<S, SM> EventSource<S, SM>
 impl<S, SM> Actor for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self>;
+    type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut HttpContext<Self>) {
+    fn stopping(&mut self, ctx: &mut Self::Context) {
         self.stop(ctx);
     }
 }
@@ -78,7 +77,7 @@ impl<S, SM> Actor for EventSource<S, SM>
 impl<S, SM> Transport<S, SM> for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, rec: &mut Record)
+    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, rec: &mut Record)
             -> SendResult
     {
         self.size += match *msg {
@@ -124,28 +123,17 @@ impl<S, SM> Transport<S, SM> for EventSource<S, SM>
         }
     }
 
-    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode) {
+    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode) {
         let blob = format!("data: c[{}, {:?}]\r\n\r\n", code.num(), code.reason());
         ctx.write(blob);
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>) {
+    fn send_heartbeat(&mut self, ctx: &mut Self::Context) {
         ctx.write("data: h\r\n\r\n");
     }
 
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
-    }
-}
-
-impl<S, SM> Route for EventSource<S, SM>
-    where S: Session, SM: SessionManager<S>,
-{
-    type State = SyncAddress<SM>;
-
-    fn request(req: &mut HttpRequest, _: Payload, ctx: &mut HttpContext<Self>)
-               -> RouteResult<Self> {
-        EventSource::handle(req, ctx, MAXSIZE)
     }
 }
 
@@ -155,7 +143,7 @@ impl<S, SM> StreamHandler<Frame> for EventSource<S, SM>
 impl<S, SM> Handler<Frame> for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut HttpContext<Self>) -> Response<Self, Frame> {
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
@@ -169,8 +157,7 @@ impl<S, SM> Handler<Frame> for EventSource<S, SM>
 impl<S, SM> Handler<Broadcast> for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut HttpContext<Self>)
-              -> Response<Self, Broadcast>
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Response<Self, Broadcast>
     {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg.msg, &mut rec);

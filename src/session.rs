@@ -16,13 +16,8 @@ pub enum SessionState {
     Closed,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Message)]
 pub struct Message(pub String);
-
-impl ResponseType for Message {
-    type Item = ();
-    type Error = ();
-}
 
 impl From<Message> for Frame {
     fn from(m: Message) -> Frame {

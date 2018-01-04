@@ -27,6 +27,8 @@ pub use self::jsonp::{JSONPolling, JSONPollingSend};
 
 pub const MAXSIZE: usize = 131_072;  // 128K bytes
 
+type TransportContext<T, SM> = HttpContext<T, SyncAddress<SM>>;
+
 /// Result of `Transport::send` method
 #[derive(PartialEq)]
 pub enum SendResult {
@@ -36,15 +38,15 @@ pub enum SendResult {
     Stop,
 }
 
-trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
-    StreamHandler<Frame> + Handler<Broadcast> + Route<State=SyncAddress<SM>>
+trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
+    StreamHandler<Frame> + Handler<Broadcast>
     where S: Session, SM: SessionManager<S>,
 {
     /// Set record
     fn session_record(&mut self) -> &mut Option<Record>;
 
     /// Stop transport and release session
-    fn stop(&mut self, ctx: &mut HttpContext<Self>) {
+    fn stop(&mut self, ctx: &mut TransportContext<Self, SM>) {
         if let Some(mut rec) = self.session_record().take() {
             trace!("STOPPING {:?}", ctx.connected());
 
@@ -58,21 +60,23 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
     }
 
     /// Send sockjs frame
-    fn send(&mut self, ctx: &mut HttpContext<Self>, msg: &Frame, record: &mut Record)
+    fn send(&mut self, ctx: &mut TransportContext<Self, SM>, msg: &Frame, record: &mut Record)
             -> SendResult;
 
     /// Send close frame
-    fn send_close(&mut self, ctx: &mut HttpContext<Self>, code: CloseCode);
+    fn send_close(&mut self, ctx: &mut TransportContext<Self, SM>, code: CloseCode);
 
     /// Send heartbeat
-    fn send_heartbeat(&mut self, ctx: &mut HttpContext<Self>);
+    fn send_heartbeat(&mut self, ctx: &mut TransportContext<Self, SM>);
 
     /// Send sockjs frame
-    fn send_buffered(&mut self, ctx: &mut HttpContext<Self>, record: &mut Record) -> SendResult {
+    fn send_buffered(&mut self, ctx: &mut TransportContext<Self, SM>, record: &mut Record)
+                     -> SendResult {
         while !record.buffer.is_empty() {
             let is_msg = if let Some(front) = record.buffer.front() {
                 front.is_msg()} else { false };
 
+            // pack messages to a array
             if is_msg {
                 let mut msg = Vec::new();
                 while let Some(frm) = record.buffer.pop_front() {
@@ -98,7 +102,7 @@ trait Transport<S, SM>: Actor<Context=HttpContext<Self>> +
         SendResult::Continue
     }
 
-    fn init_transport(&mut self, session: String, ctx: &mut HttpContext<Self>) {
+    fn init_transport(&mut self, session: String, ctx: &mut TransportContext<Self, SM>) {
         // acquire session
         let addr = ctx.sync_subscriber();
         ctx.state().call(self, Acquire::new(session, addr))
