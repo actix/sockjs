@@ -25,11 +25,10 @@ impl Default for Echo {
 impl Session for Echo {}
 
 impl Handler<Message> for Echo {
-    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
-              -> Response<Self, Message>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>) {
         ctx.send(msg);
-        Self::empty()
     }
 }
 
@@ -53,10 +52,10 @@ impl Default for Close {
 impl Session for Close {}
 
 impl Handler<Message> for Close {
-    fn handle(&mut self, _: Message, _: &mut sockjs::SockJSContext<Self>)
-              -> Response<Self, Message>
-    {
-        Self::empty()
+    type Result = ();
+
+    fn handle(&mut self, _: Message, ctx: &mut sockjs::SockJSContext<Self>) {
+        ctx.close()
     }
 }
 
@@ -86,7 +85,7 @@ fn main() {
                 "/cookie_needed_echo",
                 sockjs::SockJS::new(sm.clone()).cookie_needed(true))
             .resource("/exit.html", |r| r.f(|_| {
-                Arbiter::system().send(msgs::SystemExit(0));
+                Arbiter::system().send(actix::msgs::SystemExit(0));
                 httpcodes::HTTPOk})))
         .keep_alive(Some(0))
         .bind("127.0.0.1:52081").unwrap()

@@ -28,7 +28,7 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
         let session = req.match_info().get("session").unwrap().to_owned();
 
         let mut ctx = HttpContext::from_request(req);
-        ctx.add_stream(stream);
+        ctx.add_message_stream(stream);
 
         // init transport
         let mut tr = Websocket{s: PhantomData,
@@ -105,28 +105,28 @@ impl<S, SM> StreamHandler<Frame> for Websocket<S, SM>
 impl<S, SM> Handler<Frame> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
+    type Result = ();
+
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
             rec.buffer.push_back(msg.into());
         }
-        Self::empty()
     }
 }
 
 impl<S, SM> Handler<Broadcast> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context)
-              -> Response<Self, Broadcast>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg.msg, &mut rec);
             self.rec = Some(rec);
         }
-        Self::empty()
     }
 }
 
@@ -136,19 +136,19 @@ impl<S, SM> StreamHandler<ws::Message> for Websocket<S, SM>
 impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context)
-              -> Response<Self, ws::Message>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         // process websocket messages
         match msg {
             ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, &msg),
             ws::Message::Text(text) => {
                 if text.is_empty() {
-                    return Self::empty();
+                    return
                 }
                 let msg: String = if text.starts_with('[') {
                     if text.len() <= 2 {
-                        return Self::empty();
+                        return
                     }
                     match serde_json::from_slice(text[1..text.len()-1].as_ref()) {
                         Ok(msgs) => msgs,
@@ -156,7 +156,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                             ws::WsWriter::close(
                                 ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
                             ctx.stop();
-                            return Self::empty()
+                            return
                         }
                     }
                 } else {
@@ -166,7 +166,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                             ws::WsWriter::close(
                                 ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
                             ctx.stop();
-                            return Self::empty()
+                            return
                         }
                     }
                 };
@@ -197,6 +197,5 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
             },
             _ => (),
         }
-        Self::empty()
     }
 }

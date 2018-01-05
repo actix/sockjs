@@ -208,17 +208,18 @@ impl<S: Session> Actor for SockJSManager<S> {
 
 #[doc(hidden)]
 impl<S: Session> Handler<Acquire> for SockJSManager<S> {
-    fn handle(&mut self, msg: Acquire, ctx: &mut Context<Self>) -> Response<Self, Acquire>
-    {
+    type Result = MessageResult<Acquire>;
+
+    fn handle(&mut self, msg: Acquire, ctx: &mut Context<Self>) -> Self::Result {
         if let Some(entry) = self.sessions.get_mut(&msg.sid) {
             if let Some(rec) = entry.record.take() {
                 let (tx, rx) = unbounded();
                 let _ = rec.tx.unbounded_send(SockJSChannel::Acquired(tx));
                 self.idle.remove(&msg.sid);
                 entry.transport = Some(msg.addr);
-                return Self::reply((rec, rx))
+                return Ok((rec, rx))
             } else {
-                return Self::reply_error(SessionError::Acquired)
+                return Err(SessionError::Acquired)
             }
         }
         let (addr, tx) = SockJSContext::start(Arc::clone(&msg.sid), ctx.address());
@@ -232,15 +233,15 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
         let rec = Record::new(msg.sid, tx);
         let (tx, rx) = unbounded();
         let _ = rec.tx.unbounded_send(SockJSChannel::Acquired(tx));
-        Self::reply((rec, rx))
+        Ok((rec, rx))
     }
 }
 
 #[doc(hidden)]
 impl<S: Session> Handler<Release> for SockJSManager<S> {
-    fn handle(&mut self, msg: Release, _: &mut Context<Self>)
-              -> Response<Self, Release>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Release, _: &mut Context<Self>) {
         if let Some(entry) = self.sessions.get_mut(&msg.ses.sid) {
             self.idle.insert(msg.ses.sid.clone());
             let _ = match msg.ses.state {
@@ -256,29 +257,28 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
             entry.record = Some(msg.ses);
             entry.transport.take();
         }
-        Self::empty()
     }
 }
 
 #[doc(hidden)]
 impl<S: Session> Handler<SessionMessage> for SockJSManager<S> {
-    fn handle(&mut self, msg: SessionMessage, _: &mut Context<Self>)
-              -> Response<Self, SessionMessage>
-    {
+    type Result = MessageResult<SessionMessage>;
+
+    fn handle(&mut self, msg: SessionMessage, _: &mut Context<Self>) -> Self::Result {
         if let Some(entry) = self.sessions.get_mut(&msg.sid) {
             entry.addr.send(msg.msg);
-            Self::empty()
+            Ok(())
         } else {
-            Self::reply_error(())
+            Err(())
         }
     }
 }
 
 #[doc(hidden)]
 impl<S: Session> Handler<Broadcast> for SockJSManager<S> {
-    fn handle(&mut self, msg: Broadcast, _: &mut Context<Self>)
-              -> Response<Self, Broadcast>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Broadcast, _: &mut Context<Self>) {
         for entry in self.sessions.values_mut() {
             if let Some(ref tr) = entry.transport {
                 let _ = tr.send(msg.clone());
@@ -288,6 +288,5 @@ impl<S: Session> Handler<Broadcast> for SockJSManager<S> {
                 rec.add(Arc::clone(&msg.msg));
             }
         }
-        Self::empty()
     }
 }

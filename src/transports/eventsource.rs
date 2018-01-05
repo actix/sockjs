@@ -143,28 +143,29 @@ impl<S, SM> StreamHandler<Frame> for EventSource<S, SM>
 impl<S, SM> Handler<Frame> for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
+    type Result = ();
+
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
             rec.add(msg);
         }
-        Self::empty()
     }
 }
 
 impl<S, SM> Handler<Broadcast> for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Response<Self, Broadcast>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg.msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
             rec.add(msg);
         }
-        Self::empty()
     }
 }

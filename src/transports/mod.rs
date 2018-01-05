@@ -122,7 +122,7 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
                                     ctx.state().send(Release{ses: rec.0});
                                 } else {
                                     *act.session_record() = Some(rec.0);
-                                    ctx.add_stream(rec.1);
+                                    ctx.add_message_stream(rec.1);
                                 }
                             },
 
@@ -139,7 +139,7 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
                                     ctx.state().send(Release{ses: rec.0});
                                 } else {
                                     *act.session_record()  = Some(rec.0);
-                                    ctx.add_stream(rec.1);
+                                    ctx.add_message_stream(rec.1);
                                 }
                             },
 

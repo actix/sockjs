@@ -30,7 +30,7 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
         let sid = format!("{}", rand::random::<u32>());
 
         let mut ctx = HttpContext::from_request(req);
-        ctx.add_stream(stream);
+        ctx.add_message_stream(stream);
 
         let mut tr = RawWebsocket{s: PhantomData,
                                   sm: PhantomData,
@@ -101,28 +101,28 @@ impl<S, SM> StreamHandler<Frame> for RawWebsocket<S, SM>
 impl<S, SM> Handler<Frame> for RawWebsocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) -> Response<Self, Frame> {
+    type Result = ();
+
+    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg, &mut rec);
             self.rec = Some(rec);
         } else if let Some(ref mut rec) = self.rec {
             rec.buffer.push_back(msg.into());
         }
-        Self::empty()
     }
 }
 
 impl<S, SM> Handler<Broadcast> for RawWebsocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context)
-              -> Response<Self, Broadcast>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
         if let Some(mut rec) = self.rec.take() {
             self.send(ctx, &msg.msg, &mut rec);
             self.rec = Some(rec);
         }
-        Self::empty()
     }
 }
 
@@ -132,9 +132,9 @@ impl<S, SM> StreamHandler<ws::Message> for RawWebsocket<S, SM>
 impl<S, SM> Handler<ws::Message> for RawWebsocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context)
-              -> Response<Self, ws::Message>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         // process websocket messages
         match msg {
             ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, &msg),
@@ -159,6 +159,5 @@ impl<S, SM> Handler<ws::Message> for RawWebsocket<S, SM>
             }
             _ => (),
         }
-        Self::empty()
     }
 }

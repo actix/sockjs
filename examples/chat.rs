@@ -35,11 +35,10 @@ impl Session for Chat {
 
 /// Session has to be able to handle `sockjs::Message` messages
 impl Handler<Message> for Chat {
-    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
-              -> Response<Self, Message>
-    {
+    type Result = ();
+
+    fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>) {
         ctx.broadcast(msg);
-        Self::empty()
     }
 }
 

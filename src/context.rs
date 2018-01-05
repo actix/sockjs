@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::collections::VecDeque;
 
 use actix::dev::*;
+use actix::{ActorState};
+
 use serde_json;
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::oneshot::Sender;
@@ -77,7 +79,7 @@ impl<A> ActorContext for SockJSContext<A> where A: Session<Context=Self>
 
 impl<A> AsyncContext<A> for SockJSContext<A> where A: Session<Context=Self>
 {
-    fn spawn<F>(&mut self, fut: F) -> SpawnHandle
+    fn spawn<F>(&mut self, fut: F) -> actix::SpawnHandle
         where F: ActorFuture<Item=(), Error=(), Actor=A> + 'static
     {
         self.modified = true;
@@ -91,12 +93,12 @@ impl<A> AsyncContext<A> for SockJSContext<A> where A: Session<Context=Self>
         self.wait.add(fut);
     }
 
-    fn cancel_future(&mut self, handle: SpawnHandle) -> bool {
+    fn cancel_future(&mut self, handle: actix::SpawnHandle) -> bool {
         self.modified = true;
         self.items.cancel_future(handle)
     }
 
-    fn cancel_future_on_stop(&mut self, handle: SpawnHandle) {
+    fn cancel_future_on_stop(&mut self, handle: actix::SpawnHandle) {
         self.items.cancel_future_on_stop(handle)
     }
 }
@@ -110,7 +112,7 @@ impl<A> AsyncContextApi<A> for SockJSContext<A> where A: Session<Context=Self> {
 impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
     #[doc(hidden)]
-    pub fn subscriber<M>(&mut self) -> Box<Subscriber<M>>
+    pub fn subscriber<M>(&mut self) -> Box<actix::Subscriber<M>>
         where A: Handler<M>,
               M: ResponseType + 'static
     {
@@ -347,12 +349,14 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
 impl<A> ToEnvelope<A> for SockJSContext<A>
     where A: Session<Context=SockJSContext<A>>,
 {
-    fn pack<M>(msg: M, tx: Option<Sender<Result<M::Item, M::Error>>>) -> Envelope<A>
+    fn pack<M>(msg: M,
+               tx: Option<Sender<Result<M::Item, M::Error>>>,
+               channel_on_drop: bool) -> Envelope<A>
         where A: Handler<M>,
               M: ResponseType + Send + 'static,
               M::Item: Send,
               M::Error: Send
     {
-        RemoteEnvelope::new(msg, tx).into()
+        RemoteEnvelope::new(msg, tx, channel_on_drop).into()
     }
 }
