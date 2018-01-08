@@ -167,7 +167,7 @@ impl<S: Session + Default> Default for SockJSManager<S> {
         SockJSManager {
             idle: HashSet::new(),
             sessions: HashMap::new(),
-            factory: Box::new(|| S::default()),
+            factory: Box::new(S::default),
         }
     }
 }
@@ -193,7 +193,7 @@ impl<S: Session> SockJSManager<S> {
             for sid in &act.idle {
                 if let Some(entry) = act.sessions.get(sid) {
                     if entry.tick + Duration::new(10, 0) < now {
-                        rem.push(sid.clone());
+                        rem.push(Arc::clone(sid));
                     }
                 }
             }
@@ -238,7 +238,7 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
         let (addr, tx) = SockJSContext::start(
             (*self.factory)(), Arc::clone(&msg.sid), ctx.address());
         self.sessions.insert(
-            msg.sid.clone(),
+            Arc::clone(&msg.sid),
             Entry{addr: addr,
                   record: None,
                   transport: Some(msg.addr),
@@ -258,7 +258,7 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
 
     fn handle(&mut self, msg: Release, _: &mut Context<Self>) {
         if let Some(entry) = self.sessions.get_mut(&msg.ses.sid) {
-            self.idle.insert(msg.ses.sid.clone());
+            self.idle.insert(Arc::clone(&msg.ses.sid));
             println!("RELEASE SESSION: {:?}", msg.ses.state);
             let _ = match msg.ses.state {
                 SessionState::Closed =>

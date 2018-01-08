@@ -46,7 +46,7 @@ const ROUTES: [RouteType; 5] = [
     RouteType::IFrame,
     RouteType::IFrame];
 
-const PATTERNS: [&'static str; 5] = [
+const PATTERNS: [&str; 5] = [
     "info",
     "{server}/{session}/{transport}",
     "^websocket",
@@ -181,7 +181,7 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                 }
             },
             RouteType::Transport => {
-                let req2 = req.change_state(self.manager.clone());
+                let req2 = req.change_state(Rc::clone(&self.manager));
                 self.patterns[idx].update_match_info(&mut req, req2.prefix_len());
 
                 let tr = req.match_info().get("transport").unwrap().to_owned();
@@ -206,7 +206,7 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                 } else if tr == "xhr" {
                     transports::Xhr::<A, _>::init(req2).into()
                 } else if tr == "xhr_send" {
-                    match transports::XhrSend(req2).into() {
+                    match transports::XhrSend(req2) {
                         Either::A(resp) => resp.into(),
                         Either::B(fut) => fut.into(),
                     }
@@ -226,7 +226,8 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                 }
             },
             RouteType::RawWebsocket =>
-                transports::RawWebsocket::init(req.change_state(self.manager.clone())).into(),
+                transports::RawWebsocket::init(
+                    req.change_state(Rc::clone(&self.manager))).into(),
         }
     }
 }

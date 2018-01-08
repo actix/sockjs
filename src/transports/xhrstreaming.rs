@@ -14,7 +14,7 @@ use manager::{Broadcast, Record, SessionManager};
 use super::{Transport, SendResult, Flags};
 
 
-const OPEN_SEQ: &'static str =
+const OPEN_SEQ: &str =
     "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\
      hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\
      hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\

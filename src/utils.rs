@@ -11,7 +11,7 @@ use http::header::{EXPIRES, ORIGIN, CACHE_CONTROL,
                    ACCESS_CONTROL_MAX_AGE,
                    ACCESS_CONTROL_REQUEST_HEADERS};
 
-const CACHE_CONTROL_VAL: &'static str =
+const CACHE_CONTROL_VAL: &str =
     "no-store, no-cache, no-transform, must-revalidate, max-age=0";
 
 #[derive(Serialize)]
@@ -88,8 +88,8 @@ impl SockjsHeaders for HttpResponseBuilder {
     }
 
     fn sockjs_cache_headers(&mut self) -> &mut Self {
-        const TD365_SECONDS: &'static str = "31536000";
-        const TD365_SECONDS_CC: &'static str  = "max-age=31536000, public";
+        const TD365_SECONDS: &str = "31536000";
+        const TD365_SECONDS_CC: &str  = "max-age=31536000, public";
 
         let d = time::now() + time::Duration::days(365);
 

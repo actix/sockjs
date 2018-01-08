@@ -14,7 +14,7 @@ use manager::{Broadcast, Record, SessionManager};
 
 use super::{Transport, SendResult, Flags};
 
-const PRELUDE1: &'static str = r#"
+const PRELUDE1: &str = r#"
 <!doctype html>
 <html><head>
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
@@ -24,13 +24,13 @@ const PRELUDE1: &'static str = r#"
     document.domain = document.domain;
     var c = parent."#;
 
-const PRELUDE2: &'static str = r#";
+const PRELUDE2: &str = r#";
     c.start();
     function p(d) {c.message(d);};
     window.onload = function() {c.stop();};
   </script>"#;
 
-const PRELUDE3: &'static [u8] = &[b' '; 1024];
+const PRELUDE3: &[u8] = &[b' '; 1024];
 
 
 pub struct HTMLFile<S, SM>

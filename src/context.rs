@@ -180,12 +180,10 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
                 _ => unreachable!(),
             };
             self.buf.push_back(BufItem::Messages(vec));
+        } else if msg.is_msg() {
+            self.buf.push_back(BufItem::Message(msg.into_message()));
         } else {
-            if msg.is_msg() {
-                self.buf.push_back(BufItem::Message(msg.into_message()));
-            } else {
-                self.buf.push_back(BufItem::Frame(msg));
-            }
+            self.buf.push_back(BufItem::Frame(msg));
         }
     }
 }

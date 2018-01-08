@@ -93,7 +93,7 @@ impl From<SessionError> for CloseCode {
     }
 }
 
-pub const IFRAME_HTML: &'static str = r#"<!DOCTYPE html>
+pub const IFRAME_HTML: &str = r#"<!DOCTYPE html>
 <html>
 <head>
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />

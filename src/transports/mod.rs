@@ -70,13 +70,11 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
             if self.flags().contains(Flags::READY) {
                 rec.add(msg.msg);
                 *self.session_record() = Some(rec);
+            } else if SendResult::Stop == self.send(ctx, &msg.msg, &mut rec) {
+                *self.session_record() = Some(rec);
+                self.release(ctx);
             } else {
-                if SendResult::Stop == self.send(ctx, &msg.msg, &mut rec) {
-                    *self.session_record() = Some(rec);
-                    self.release(ctx);
-                } else {
-                    *self.session_record() = Some(rec);
-                }
+                *self.session_record() = Some(rec);
             }
         }
     }
@@ -164,13 +162,11 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
                                 {
                                     // release is send stops
                                     act.flags().insert(Flags::RELEASE);
-                                } else {
-                                    if let SendResult::Stop =
-                                        act.send_buffered(ctx, &mut rec.0) // send buffered messages
-                                    {
-                                        // release immidietly
-                                        act.flags().insert(Flags::RELEASE);
-                                    }
+                                } else if let SendResult::Stop =
+                                    act.send_buffered(ctx, &mut rec.0) // send buffered messages
+                                {
+                                    // release immidietly
+                                    act.flags().insert(Flags::RELEASE);
                                 }
                                 *act.session_record() = Some(rec.0);
                                 ctx.add_message_stream(rec.1);

@@ -197,7 +197,7 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
 
                 // empty message
                 if buf.is_empty() {
-                    return Either::A(
+                    Either::A(
                         ok(httpcodes::HTTPInternalServerError.with_body("Payload expected.")))
                 } else {
                     // deserialize json
@@ -237,12 +237,12 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
 
                     // do nothing
                     if msgs.is_empty() {
-                        return Either::A(
+                        Either::A(
                             ok(httpcodes::HTTPOk.build()
                                .content_type("text/plain; charset=UTF-8")
                                .sockjs_no_cache()
                                .sockjs_session_cookie(&req)
-                               .body("ok").unwrap()));
+                               .body("ok").unwrap()))
                     } else {
                         let last = msgs.pop().unwrap();
                         for msg in msgs {
@@ -252,7 +252,7 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
                                     msg: Message(msg) });
                         }
 
-                        return Either::B(
+                        Either::B(
                             req.state().call_fut(
                                 SessionMessage { sid: Arc::clone(&sid),
                                                  msg: Message(last) })
