@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::marker::PhantomData;
 
 use actix::*;
@@ -176,8 +177,9 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                 if let Some(ref rec) = self.rec {
                     ctx.state().send(
                         SessionMessage {
-                            sid: rec.sid.clone(),
-                            msg: Message(msg)});
+                            sid: Arc::clone(&rec.sid),
+                            msg: Message(msg)
+                        });
                 }
             }
             ws::Message::Binary(_) => {

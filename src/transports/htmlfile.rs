@@ -140,7 +140,7 @@ impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
                 self.write(&blob, ctx);
             }
             Frame::MessageVec(ref s) => {
-                self.write(&s, ctx);
+                self.write(s, ctx);
             }
             Frame::MessageBlob(_) => {
                 unimplemented!()

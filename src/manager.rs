@@ -157,20 +157,32 @@ struct Entry<S: Session> {
 pub struct SockJSManager<S: Session> {
     idle: HashSet<Arc<String>>,
     sessions: HashMap<Arc<String>, Entry<S>>,
+    factory: Box<Fn() -> S + Sync + Send>,
 }
 
 impl<S: Session> SessionManager<S> for SockJSManager<S> {}
 
-impl<S: Session> Default for SockJSManager<S> {
+impl<S: Session + Default> Default for SockJSManager<S> {
     fn default() -> SockJSManager<S> {
         SockJSManager {
             idle: HashSet::new(),
             sessions: HashMap::new(),
+            factory: Box::new(|| S::default()),
         }
     }
 }
 
 impl<S: Session> SockJSManager<S> {
+
+    pub fn new<F>(factory: F) -> Self
+        where F: Sync + Send + 'static + Fn() -> S,
+    {
+        SockJSManager {
+            factory: Box::new(factory),
+            idle: HashSet::new(),
+            sessions: HashMap::new(),
+        }
+    }
 
     fn hb(&self, ctx: &mut Context<Self>) {
         ctx.run_later(Duration::new(10, 0), |act, ctx| {
@@ -223,7 +235,8 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
                 return Err(SessionError::Acquired)
             }
         }
-        let (addr, tx) = SockJSContext::start(Arc::clone(&msg.sid), ctx.address());
+        let (addr, tx) = SockJSContext::start(
+            (*self.factory)(), Arc::clone(&msg.sid), ctx.address());
         self.sessions.insert(
             msg.sid.clone(),
             Entry{addr: addr,

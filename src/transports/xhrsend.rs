@@ -68,13 +68,13 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
                         for msg in msgs {
                             req.state().send(
                                 SessionMessage {
-                                    sid: sid.clone(),
-                                    msg: Message(msg)});
+                                    sid: Arc::clone(&sid),
+                                    msg: Message(msg) });
                         }
 
                         return Either::B(
-                            req.state().call_fut(SessionMessage { sid: sid.clone(),
-                                                                  msg: Message(last)})
+                            req.state().call_fut(SessionMessage { sid: Arc::clone(&sid),
+                                                                  msg: Message(last) })
                                 .from_err()
                                 .and_then(move |res| {
                                     match res {

@@ -192,13 +192,13 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
 
 impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
-    pub(crate) fn start(sid: Arc<String>, addr: SyncAddress<SockJSManager<A>>)
+    pub(crate) fn start(session: A, sid: Arc<String>, addr: SyncAddress<SockJSManager<A>>)
                         -> (SyncAddress<A>, UnboundedSender<SockJSChannel>)
     {
         let (tx, rx) = unbounded();
 
         let mut ctx = SockJSContext {
-            inner: ContextImpl::new(Some(A::default())),
+            inner: ContextImpl::new(Some(session)),
             sid: sid,
             tx: None,
             rx: rx,

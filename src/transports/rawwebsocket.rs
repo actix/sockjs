@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::marker::PhantomData;
 
 use actix::*;
@@ -70,7 +71,7 @@ impl<S, SM> Transport<S, SM> for RawWebsocket<S, SM> where S: Session, SM: Sessi
                 ws::WsWriter::ping(ctx, "");
             },
             Frame::Message(ref s) | Frame::MessageVec(ref s) => {
-                ws::WsWriter::text(ctx, &s);
+                ws::WsWriter::text(ctx, s);
             }
             Frame::MessageBlob(ref b) => {
                 ws::WsWriter::binary(ctx, Vec::from(b.as_ref()));
@@ -139,7 +140,7 @@ impl<S, SM> Handler<ws::Message> for RawWebsocket<S, SM>
                     if let Some(ref rec) = self.rec {
                         ctx.state().send(
                             SessionMessage {
-                                sid: rec.sid.clone(),
+                                sid: Arc::clone(&rec.sid),
                                 msg: Message(text)});
                     }
                 }
