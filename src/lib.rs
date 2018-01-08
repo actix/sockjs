@@ -12,6 +12,8 @@ extern crate futures;
 #[macro_use]
 extern crate lazy_static;
 extern crate percent_encoding;
+#[macro_use]
+extern crate bitflags;
 
 extern crate serde;
 extern crate serde_json;

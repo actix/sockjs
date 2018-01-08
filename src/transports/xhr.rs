@@ -5,12 +5,13 @@ use actix_web::*;
 use serde_json;
 use http::header::{self, ACCESS_CONTROL_ALLOW_METHODS};
 
+use context::ChannelItem;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
 use manager::{Broadcast, Record, SessionManager};
 
-use super::{Transport, SendResult};
+use super::{Transport, SendResult, Flags};
 
 
 pub struct Xhr<S, SM>
@@ -19,6 +20,7 @@ pub struct Xhr<S, SM>
     s: PhantomData<S>,
     sm: PhantomData<SM>,
     rec: Option<Record>,
+    flags: Flags,
 }
 
 // Http actor implementation
@@ -27,8 +29,9 @@ impl<S, SM> Actor for Xhr<S, SM>
 {
     type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) {
-        self.stop(ctx)
+    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+        self.release(ctx);
+        true
     }
 }
 
@@ -38,6 +41,8 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
 {
     fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult
     {
+        println!("MSG: {:?}", msg);
+
         match *msg {
             Frame::Heartbeat => {
                 ctx.write("h\n");
@@ -82,6 +87,10 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
     }
+
+    fn flags(&mut self) -> &mut Flags {
+        &mut self.flags
+    }
 }
 
 impl<S, SM> Xhr<S, SM>
@@ -119,28 +128,21 @@ impl<S, SM> Xhr<S, SM>
         // init transport
         let mut transport = Xhr{s: PhantomData,
                                 sm: PhantomData,
-                                rec: None};
+                                rec: None,
+                                flags: Flags::empty()};
         transport.init_transport(session, &mut ctx);
 
         Ok(resp.body(ctx.actor(transport))?)
     }
 }
 
-impl<S, SM> StreamHandler<Frame> for Xhr<S, SM>
-    where S: Session, SM: SessionManager<S> {}
-
-impl<S, SM> Handler<Frame> for Xhr<S, SM>
+impl<S, SM> Handler<ChannelItem> for Xhr<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+    fn handle(&mut self, msg: ChannelItem, ctx: &mut Self::Context) {
+        self.handle_message(msg, ctx)
     }
 }
 
@@ -150,11 +152,6 @@ impl<S, SM> Handler<Broadcast> for Xhr<S, SM>
     type Result = ();
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg.msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+        self.handle_broadcast(msg, ctx)
     }
 }

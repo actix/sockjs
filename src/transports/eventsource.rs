@@ -6,12 +6,13 @@ use actix_web::*;
 use http::header;
 use serde_json;
 
+use context::ChannelItem;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
 use manager::{Broadcast, Record, SessionManager};
 
-use super::{Transport, SendResult};
+use super::{Transport, SendResult, Flags};
 
 
 pub struct EventSource<S, SM>
@@ -22,6 +23,7 @@ pub struct EventSource<S, SM>
     size: usize,
     rec: Option<Record>,
     maxsize: usize,
+    flags: Flags,
 }
 
 impl<S, SM> EventSource<S, SM>
@@ -47,7 +49,9 @@ impl<S, SM> EventSource<S, SM>
         let mut ctx = HttpContext::new(
             req, EventSource{s: PhantomData,
                              sm: PhantomData,
-                             size: 0, rec: None, maxsize: maxsize});
+                             size: 0, rec: None,
+                             flags: Flags::empty(),
+                             maxsize: maxsize});
         ctx.write("\r\n");
 
         // init transport, but aftre prelude only
@@ -68,8 +72,9 @@ impl<S, SM> Actor for EventSource<S, SM>
 {
     type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) {
-        self.stop(ctx);
+    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+        self.release(ctx);
+        true
     }
 }
 
@@ -135,23 +140,19 @@ impl<S, SM> Transport<S, SM> for EventSource<S, SM>
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
     }
+
+    fn flags(&mut self) -> &mut Flags {
+        &mut self.flags
+    }
 }
 
-impl<S, SM> StreamHandler<Frame> for EventSource<S, SM>
-    where S: Session, SM: SessionManager<S> {}
-
-impl<S, SM> Handler<Frame> for EventSource<S, SM>
+impl<S, SM> Handler<ChannelItem> for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+    fn handle(&mut self, msg: ChannelItem, ctx: &mut Self::Context) {
+        self.handle_message(msg, ctx)
     }
 }
 
@@ -161,11 +162,6 @@ impl<S, SM> Handler<Broadcast> for EventSource<S, SM>
     type Result = ();
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg.msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+        self.handle_broadcast(msg, ctx)
     }
 }

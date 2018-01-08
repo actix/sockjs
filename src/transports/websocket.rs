@@ -4,11 +4,12 @@ use actix::*;
 use actix_web::*;
 use serde_json;
 
+use context::ChannelItem;
 use protocol::{Frame, CloseCode};
 use session::{Message, Session};
 use manager::{Broadcast, Release, Record, SessionManager, SessionMessage};
 
-use super::{Transport, SendResult};
+use super::{Transport, SendResult, Flags};
 
 
 pub struct Websocket<S, SM>
@@ -17,6 +18,7 @@ pub struct Websocket<S, SM>
     s: PhantomData<S>,
     sm: PhantomData<SM>,
     rec: Option<Record>,
+    flags: Flags,
 }
 
 impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
@@ -33,8 +35,8 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
         // init transport
         let mut tr = Websocket{s: PhantomData,
                                sm: PhantomData,
-                               rec: None};
-        println!("session");
+                               rec: None,
+                               flags: Flags::empty()};
         tr.init_transport(session, &mut ctx);
 
         Ok(resp.body(ctx.actor(tr))?)
@@ -46,12 +48,12 @@ impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
 {
     type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
         if let Some(mut rec) = self.rec.take() {
             rec.close();
             ctx.state().send(Release{ses: rec});
         }
-        ctx.terminate()
+        true
     }
 }
 
@@ -74,7 +76,6 @@ impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionM
                 // ctx.write(format!("a{}\n", s));
             }
             Frame::Open => {
-                println!("test");
                 ws::WsWriter::text(ctx, "o");
             },
             Frame::Close(code) => {
@@ -97,23 +98,19 @@ impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionM
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
     }
+
+    fn flags(&mut self) -> &mut Flags {
+        &mut self.flags
+    }
 }
 
-impl<S, SM> StreamHandler<Frame> for Websocket<S, SM>
-    where S: Session, SM: SessionManager<S> {}
-
-impl<S, SM> Handler<Frame> for Websocket<S, SM>
+impl<S, SM> Handler<ChannelItem> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.buffer.push_back(msg.into());
-        }
+    fn handle(&mut self, msg: ChannelItem, ctx: &mut Self::Context) {
+        self.handle_message(msg, ctx)
     }
 }
 
@@ -129,9 +126,6 @@ impl<S, SM> Handler<Broadcast> for Websocket<S, SM>
         }
     }
 }
-
-impl<S, SM> StreamHandler<ws::Message> for Websocket<S, SM>
-    where S: Session, SM: SessionManager<S> {}
 
 impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
@@ -155,6 +149,10 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                         Err(_) => {
                             ws::WsWriter::close(
                                 ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
+                            if let Some(mut rec) = self.rec.take() {
+                                rec.interrupted();
+                                ctx.state().send(Release{ses: rec});
+                            }
                             ctx.stop();
                             return
                         }
@@ -165,6 +163,10 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                         Err(_) => {
                             ws::WsWriter::close(
                                 ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
+                            if let Some(mut rec) = self.rec.take() {
+                                rec.interrupted();
+                                ctx.state().send(Release{ses: rec});
+                            }
                             ctx.stop();
                             return
                         }

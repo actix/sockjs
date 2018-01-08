@@ -6,7 +6,7 @@ use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
 use actix::*;
 use protocol::Frame;
-use context::{SockJSContext, SockJSChannel};
+use context::{SockJSContext, SockJSChannel, ChannelItem};
 use session::{Message, Session, SessionState, SessionError, CloseReason};
 
 #[doc(hidden)]
@@ -28,7 +28,7 @@ impl Acquire {
 }
 
 impl ResponseType for Acquire {
-    type Item = (Record, UnboundedReceiver<Frame>);
+    type Item = (Record, UnboundedReceiver<ChannelItem>);
     type Error = SessionError;
 }
 
@@ -130,6 +130,7 @@ impl Record {
     }
 
     pub fn close(&mut self) {
+        println!("Record close");
         self.state = SessionState::Closed;
     }
 
@@ -232,6 +233,7 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
             });
         let rec = Record::new(msg.sid, tx);
         let (tx, rx) = unbounded();
+        let _ = rec.tx.unbounded_send(SockJSChannel::Opened);
         let _ = rec.tx.unbounded_send(SockJSChannel::Acquired(tx));
         Ok((rec, rx))
     }
@@ -244,6 +246,7 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
     fn handle(&mut self, msg: Release, _: &mut Context<Self>) {
         if let Some(entry) = self.sessions.get_mut(&msg.ses.sid) {
             self.idle.insert(msg.ses.sid.clone());
+            println!("RELEASE SESSION: {:?}", msg.ses.state);
             let _ = match msg.ses.state {
                 SessionState::Closed =>
                     msg.ses.tx.unbounded_send(

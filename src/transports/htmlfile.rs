@@ -6,12 +6,13 @@ use actix_web::*;
 use serde_json;
 use regex::Regex;
 
+use context::ChannelItem;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
 use manager::{Broadcast, Record, SessionManager};
 
-use super::{Transport, SendResult};
+use super::{Transport, SendResult, Flags};
 
 const PRELUDE1: &'static str = r#"
 <!doctype html>
@@ -40,6 +41,7 @@ pub struct HTMLFile<S, SM>
     size: usize,
     maxsize: usize,
     rec: Option<Record>,
+    flags: Flags,
 }
 
 impl<S, SM> HTMLFile<S, SM>
@@ -86,7 +88,9 @@ impl<S, SM> HTMLFile<S, SM>
             let mut ctx = HttpContext::new(
                 req, HTMLFile{s: PhantomData,
                               sm: PhantomData,
-                              size: 0, rec: None, maxsize: maxsize});
+                              size: 0, rec: None,
+                              maxsize: maxsize,
+                              flags: Flags::empty()});
             ctx.write(PRELUDE1);
             ctx.write(callback);
             ctx.write(PRELUDE2);
@@ -114,8 +118,9 @@ impl<S, SM> Actor for HTMLFile<S, SM>
 {
     type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) {
-        self.stop(ctx);
+    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+        self.release(ctx);
+        true
     }
 }
 
@@ -171,23 +176,19 @@ impl<S, SM> Transport<S, SM> for HTMLFile<S, SM>
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
     }
+
+    fn flags(&mut self) -> &mut Flags {
+        &mut self.flags
+    }
 }
 
-impl<S, SM> StreamHandler<Frame> for HTMLFile<S, SM>
-    where S: Session, SM: SessionManager<S> {}
-
-impl<S, SM> Handler<Frame> for HTMLFile<S, SM>
+impl<S, SM> Handler<ChannelItem> for HTMLFile<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+    fn handle(&mut self, msg: ChannelItem, ctx: &mut Self::Context) {
+        self.handle_message(msg, ctx)
     }
 }
 

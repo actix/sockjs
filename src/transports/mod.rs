@@ -1,11 +1,10 @@
 use actix::*;
 use actix_web::*;
-use serde_json;
-use futures::{Async, Stream};
 
+use context::ChannelItem;
 use protocol::{Frame, CloseCode};
 use session::{Session, SessionState};
-use manager::{Acquire, Release, Broadcast, Record, RecordEntry, SessionManager};
+use manager::{Acquire, Release, Broadcast, Record, SessionManager};
 
 mod xhr;
 mod xhrsend;
@@ -27,6 +26,13 @@ pub use self::jsonp::{JSONPolling, JSONPollingSend};
 
 pub const MAXSIZE: usize = 131_072;  // 128K bytes
 
+bitflags! {
+    pub struct Flags: u8 {
+        const READY = 0b0000_0001;
+        const RELEASE = 0b0000_0010;
+    }
+}
+
 type TransportContext<T, SM> = HttpContext<T, SyncAddress<SM>>;
 
 /// Result of `Transport::send` method
@@ -39,24 +45,75 @@ pub enum SendResult {
 }
 
 trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
-    StreamHandler<Frame> + Handler<Broadcast>
+    Handler<ChannelItem> + Handler<Broadcast>
     where S: Session, SM: SessionManager<S>,
 {
+    /// Session flags
+    fn flags(&mut self) -> &mut Flags;
+
     /// Set record
     fn session_record(&mut self) -> &mut Option<Record>;
 
     /// Stop transport and release session
-    fn stop(&mut self, ctx: &mut TransportContext<Self, SM>) {
+    fn release(&mut self, ctx: &mut TransportContext<Self, SM>) {
         if let Some(mut rec) = self.session_record().take() {
-            trace!("STOPPING {:?}", ctx.connected());
-
-            // peer dropped connection
             if !ctx.connected() {
                 rec.interrupted();
             }
             ctx.state().send(Release{ses: rec});
         }
-        ctx.terminate()
+        ctx.stop();
+    }
+
+    fn handle_broadcast(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
+        if let Some(mut rec) = self.session_record().take() {
+            if self.flags().contains(Flags::READY) {
+                rec.add(msg.msg);
+                *self.session_record() = Some(rec);
+            } else {
+                if SendResult::Stop == self.send(ctx, &msg.msg, &mut rec) {
+                    *self.session_record() = Some(rec);
+                    self.release(ctx);
+                } else {
+                    *self.session_record() = Some(rec);
+                }
+            }
+        }
+    }
+
+    fn handle_message(&mut self, msg: ChannelItem, ctx: &mut Self::Context) {
+        match msg {
+            ChannelItem::Frame(msg) => {
+                if let Some(mut rec) = self.session_record().take() {
+                    if self.flags().contains(Flags::READY) {
+                        if SendResult::Stop == self.send(ctx, &msg, &mut rec) {
+                            *self.session_record() = Some(rec);
+                            self.release(ctx);
+                        } else {
+                            *self.session_record() = Some(rec);
+                        }
+                    } else {
+                        rec.add(msg);
+                        *self.session_record() = Some(rec);
+                    }
+                }
+            }
+            ChannelItem::Ready => {
+                if let Some(mut rec) = self.session_record().take() {
+                    if SendResult::Stop == self.send_buffered(ctx, &mut rec) {
+                        *self.session_record() = Some(rec);
+                        self.release(ctx);
+                    } else {
+                        *self.session_record() = Some(rec);
+                    }
+                }
+                if self.flags().contains(Flags::RELEASE) {
+                    self.release(ctx)
+                } else {
+                    self.flags().insert(Flags::READY);
+                }
+            }
+        }
     }
 
     /// Send sockjs frame
@@ -73,26 +130,6 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
     fn send_buffered(&mut self, ctx: &mut TransportContext<Self, SM>, record: &mut Record)
                      -> SendResult {
         while !record.buffer.is_empty() {
-            let is_msg = if let Some(front) = record.buffer.front() {
-                front.is_msg()} else { false };
-
-            // pack messages to a array
-            if is_msg {
-                let mut msg = Vec::new();
-                while let Some(frm) = record.buffer.pop_front() {
-                    match frm {
-                        RecordEntry::Frame(Frame::Message(s)) => msg.push(s),
-                        _ => {
-                            record.buffer.push_front(frm);
-                            break
-                        }
-                    }
-                }
-
-                record.add(
-                    Frame::MessageVec(serde_json::to_string(&msg).unwrap()));
-            }
-
             if let Some(msg) = record.buffer.pop_front() {
                 if let SendResult::Stop = self.send(ctx, msg.as_ref(), record) {
                     return SendResult::Stop
@@ -110,37 +147,33 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
                 match res {
                     Ok(mut rec) => {
                         // copy messages into buffer
-                        while let Ok(Async::Ready(Some(msg))) = rec.1.poll() {
-                            rec.0.add(msg);
-                        };
                         trace!("STATE: {:?}", rec.0.state);
 
                         match rec.0.state {
                             SessionState::Running => {
                                 if let SendResult::Stop = act.send_buffered(ctx, &mut rec.0) {
                                     // release immidietly
-                                    ctx.state().send(Release{ses: rec.0});
-                                } else {
-                                    *act.session_record() = Some(rec.0);
-                                    ctx.add_message_stream(rec.1);
+                                    act.flags().insert(Flags::RELEASE);
                                 }
+                                *act.session_record() = Some(rec.0);
+                                ctx.add_message_stream(rec.1);
                             },
-
                             SessionState::New => {
                                 rec.0.state = SessionState::Running;
                                 if let SendResult::Stop = act.send(ctx, &Frame::Open, &mut rec.0)
                                 {
                                     // release is send stops
-                                    ctx.state().send(Release{ses: rec.0});
-                                } else if let SendResult::Stop =
-                                    act.send_buffered(ctx, &mut rec.0) // send buffered messages
-                                {
-                                    // release immidietly
-                                    ctx.state().send(Release{ses: rec.0});
+                                    act.flags().insert(Flags::RELEASE);
                                 } else {
-                                    *act.session_record()  = Some(rec.0);
-                                    ctx.add_message_stream(rec.1);
+                                    if let SendResult::Stop =
+                                        act.send_buffered(ctx, &mut rec.0) // send buffered messages
+                                    {
+                                        // release immidietly
+                                        act.flags().insert(Flags::RELEASE);
+                                    }
                                 }
+                                *act.session_record() = Some(rec.0);
+                                ctx.add_message_stream(rec.1);
                             },
 
                             SessionState::Interrupted => {

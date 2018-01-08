@@ -37,10 +37,6 @@ struct Close;
 
 impl Actor for Close {
     type Context = sockjs::SockJSContext<Self>;
-
-    fn started(&mut self, ctx: &mut SockJSContext<Self>) {
-        ctx.close()
-    }
 }
 
 impl Default for Close {
@@ -49,12 +45,19 @@ impl Default for Close {
     }
 }
 
-impl Session for Close {}
+impl Session for Close {
+
+    fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
+        println!("actor close opened");
+        ctx.close()
+    }
+}
 
 impl Handler<Message> for Close {
     type Result = ();
 
     fn handle(&mut self, _: Message, ctx: &mut sockjs::SockJSContext<Self>) {
+        println!("actor close handle");
         ctx.close()
     }
 }
@@ -87,7 +90,6 @@ fn main() {
             .resource("/exit.html", |r| r.f(|_| {
                 Arbiter::system().send(actix::msgs::SystemExit(0));
                 httpcodes::HTTPOk})))
-        .keep_alive(Some(0))
         .bind("127.0.0.1:52081").unwrap()
         .start();
 

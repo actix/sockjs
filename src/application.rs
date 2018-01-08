@@ -202,7 +202,7 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                 if tr == "websocket" {
                     transports::Websocket::<A, _>::init(req2).into()
                 } else if tr == "xhr_streaming" {
-                    transports::XhrStreaming::<A, _>::init(req2).into()
+                    transports::XhrStreaming::<A, _>::init(req2, self.max_size).into()
                 } else if tr == "xhr" {
                     transports::Xhr::<A, _>::init(req2).into()
                 } else if tr == "xhr_send" {

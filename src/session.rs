@@ -38,6 +38,7 @@ impl From<String> for Message {
 }
 
 #[doc(hidden)]
+#[derive(Debug, PartialEq)]
 pub enum SessionError {
     Acquired,
     Interrupted,

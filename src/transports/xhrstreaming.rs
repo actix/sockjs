@@ -5,12 +5,13 @@ use actix::*;
 use actix_web::*;
 use http::header::ACCESS_CONTROL_ALLOW_METHODS;
 
+use context::ChannelItem;
 use protocol::{Frame, CloseCode};
 use utils::SockjsHeaders;
 use session::Session;
 use manager::{Broadcast, Record, SessionManager};
 
-use super::{MAXSIZE, Transport, SendResult};
+use super::{Transport, SendResult, Flags};
 
 
 const OPEN_SEQ: &'static str =
@@ -52,19 +53,13 @@ pub struct XhrStreaming<S, SM>
     sm: PhantomData<SM>,
     size: usize,
     maxsize: usize,
+    flags: Flags,
     rec: Option<Record>,
 }
 
-impl<S, SM> XhrStreaming<S, SM>
-    where S: Session, SM: SessionManager<S>
-{
-    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
-    {
-        XhrStreaming::handle(req, MAXSIZE)
-    }
+impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
 
-    fn handle(req: HttpRequest<SyncAddress<SM>>, maxsize: usize) -> Result<HttpResponse>
-    {
+    pub fn init(req: HttpRequest<SyncAddress<SM>>, maxsize: usize) -> Result<HttpResponse> {
         if *req.method() == Method::OPTIONS {
             return Ok(
                 httpcodes::HTTPNoContent
@@ -94,6 +89,7 @@ impl<S, SM> XhrStreaming<S, SM>
                               sm: PhantomData,
                               size: 0,
                               maxsize: maxsize,
+                              flags: Flags::empty(),
                               rec: None});
         ctx.write(OPEN_SEQ);
 
@@ -114,8 +110,9 @@ impl<S, SM> Actor for XhrStreaming<S, SM>
 {
     type Context = HttpContext<Self, SyncAddress<SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) {
-        self.stop(ctx);
+    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+        self.release(ctx);
+        true
     }
 }
 
@@ -177,23 +174,19 @@ impl<S, SM> Transport<S, SM> for XhrStreaming<S, SM>
     fn session_record(&mut self) -> &mut Option<Record> {
         &mut self.rec
     }
+
+    fn flags(&mut self) -> &mut Flags {
+        &mut self.flags
+    }
 }
 
-impl<S, SM> StreamHandler<Frame> for XhrStreaming<S, SM>
-    where S: Session, SM: SessionManager<S> {}
-
-impl<S, SM> Handler<Frame> for XhrStreaming<S, SM>
+impl<S, SM> Handler<ChannelItem> for XhrStreaming<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: Frame, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+    fn handle(&mut self, msg: ChannelItem, ctx: &mut Self::Context) {
+        self.handle_message(msg, ctx)
     }
 }
 
@@ -203,11 +196,6 @@ impl<S, SM> Handler<Broadcast> for XhrStreaming<S, SM>
     type Result = ();
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) {
-        if let Some(mut rec) = self.rec.take() {
-            self.send(ctx, &msg.msg, &mut rec);
-            self.rec = Some(rec);
-        } else if let Some(ref mut rec) = self.rec {
-            rec.add(msg);
-        }
+        self.handle_broadcast(msg, ctx)
     }
 }
