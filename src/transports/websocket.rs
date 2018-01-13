@@ -7,10 +7,10 @@ use serde_json;
 
 use context::ChannelItem;
 use protocol::{Frame, CloseCode};
-use session::{Message, Session};
-use manager::{Broadcast, Release, Record, SessionManager, SessionMessage};
+use session::{Message, Session, SessionState};
+use manager::{Acquire, Broadcast, Release, Record, SessionManager, SessionMessage};
 
-use super::{Transport, SendResult, Flags};
+use super::{SendResult, Flags};
 
 
 pub struct Websocket<S, SM>
@@ -30,7 +30,7 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
         let stream = ws::WsStream::new(req.payload().readany());
         let session = req.match_info().get("session").unwrap().to_owned();
 
-        let mut ctx = HttpContext::from_request(req);
+        let mut ctx = ws::WebsocketContext::from_request(req);
         ctx.add_message_stream(stream);
 
         // init transport
@@ -42,58 +42,38 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
 
         Ok(resp.body(ctx.actor(tr))?)
     }
-}
 
-// Http actor implementation
-impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
-{
-    type Context = HttpContext<Self, SyncAddress<SM>>;
-
-    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
-        if let Some(mut rec) = self.rec.take() {
-            rec.close();
-            ctx.state().send(Release{ses: rec});
-        }
-        true
-    }
-}
-
-// Transport implementation
-impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionManager<S>,
-{
-    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult
+    fn send(&mut self, ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>,
+            msg: &Frame, record: &mut Record) -> SendResult
     {
         match *msg {
             Frame::Heartbeat => {
-                ws::WsWriter::text(ctx, "h");
+                ctx.text("h");
             },
             Frame::Message(ref s) => {
-                ws::WsWriter::text(ctx, &format!("a[{:?}]", s));
+                ctx.text(&format!("a[{:?}]", s));
             }
             Frame::MessageVec(ref s) => {
-                ws::WsWriter::text(ctx, &format!("a{}", s));
+                ctx.text(&format!("a{}", s));
             }
             Frame::MessageBlob(_) => {
                 // ctx.write(format!("a{}\n", s));
             }
             Frame::Open => {
-                ws::WsWriter::text(ctx, "o");
+                ctx.text("o");
             },
             Frame::Close(code) => {
                 record.close();
-                ws::WsWriter::text(ctx, &format!("c[{},{:?}]\n", code.num(), code.reason()));
+                ctx.text(&format!("c[{},{:?}]\n", code.num(), code.reason()));
             }
         };
 
         SendResult::Continue
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut Self::Context) {
-        ws::WsWriter::text(ctx, "h");
-    }
-
-    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode) {
-        ws::WsWriter::text(ctx, &format!("c[{},{:?}]", code.num(), code.reason()));
+    fn send_close(&mut self, ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>,
+                  code: CloseCode) {
+        ctx.text(&format!("c[{},{:?}]", code.num(), code.reason()));
     }
 
     fn session_record(&mut self) -> &mut Option<Record> {
@@ -102,6 +82,141 @@ impl<S, SM> Transport<S, SM> for Websocket<S, SM> where S: Session, SM: SessionM
 
     fn flags(&mut self) -> &mut Flags {
         &mut self.flags
+    }
+
+    /// Stop transport and release session
+    fn release(&mut self, ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>) {
+        if let Some(mut rec) = self.session_record().take() {
+            if !ctx.connected() {
+                rec.interrupted();
+            }
+            ctx.state().send(Release{ses: rec});
+        }
+        ctx.stop();
+    }
+
+    fn handle_message(&mut self, msg: ChannelItem,
+                      ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>) {
+        match msg {
+            ChannelItem::Frame(msg) => {
+                if let Some(mut rec) = self.session_record().take() {
+                    if self.flags().contains(Flags::READY) {
+                        if SendResult::Stop == self.send(ctx, &msg, &mut rec) {
+                            *self.session_record() = Some(rec);
+                            self.release(ctx);
+                        } else {
+                            *self.session_record() = Some(rec);
+                        }
+                    } else {
+                        rec.add(msg);
+                        *self.session_record() = Some(rec);
+                    }
+                }
+            }
+            ChannelItem::Ready => {
+                if let Some(mut rec) = self.session_record().take() {
+                    if SendResult::Stop == self.send_buffered(ctx, &mut rec) {
+                        *self.session_record() = Some(rec);
+                        self.release(ctx);
+                    } else {
+                        *self.session_record() = Some(rec);
+                    }
+                }
+                if self.flags().contains(Flags::RELEASE) {
+                    self.release(ctx)
+                } else {
+                    self.flags().insert(Flags::READY);
+                }
+            }
+        }
+    }
+
+    /// Send sockjs frame
+    fn send_buffered(&mut self,
+                     ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>,
+                     record: &mut Record) -> SendResult {
+        while !record.buffer.is_empty() {
+            if let Some(msg) = record.buffer.pop_front() {
+                if let SendResult::Stop = self.send(ctx, msg.as_ref(), record) {
+                    return SendResult::Stop
+                }
+            }
+        }
+        SendResult::Continue
+    }
+
+    fn init_transport(&mut self, session: String,
+                      ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>) {
+        // acquire session
+        let addr = ctx.sync_subscriber();
+        ctx.state().call(self, Acquire::new(session, addr))
+            .map(|res, act, ctx| {
+                match res {
+                    Ok(mut rec) => {
+                        // copy messages into buffer
+                        trace!("STATE: {:?}", rec.0.state);
+
+                        match rec.0.state {
+                            SessionState::Running => {
+                                if let SendResult::Stop = act.send_buffered(ctx, &mut rec.0) {
+                                    // release immidietly
+                                    act.flags().insert(Flags::RELEASE);
+                                }
+                                *act.session_record() = Some(rec.0);
+                                ctx.add_message_stream(rec.1);
+                            },
+                            SessionState::New => {
+                                rec.0.state = SessionState::Running;
+                                if let SendResult::Stop = act.send(ctx, &Frame::Open, &mut rec.0)
+                                {
+                                    // release is send stops
+                                    act.flags().insert(Flags::RELEASE);
+                                } else if let SendResult::Stop =
+                                    act.send_buffered(ctx, &mut rec.0) // send buffered messages
+                                {
+                                    // release immidietly
+                                    act.flags().insert(Flags::RELEASE);
+                                }
+                                *act.session_record() = Some(rec.0);
+                                ctx.add_message_stream(rec.1);
+                            },
+
+                            SessionState::Interrupted => {
+                                act.send(ctx, &Frame::Close(CloseCode::Interrupted), &mut rec.0);
+                                ctx.state().send(Release{ses: rec.0});
+                            },
+
+                            SessionState::Closed => {
+                                act.send(ctx, &Frame::Close(CloseCode::GoAway), &mut rec.0);
+                                ctx.state().send(Release{ses: rec.0});
+                            }
+                        }
+                    },
+                    Err(err) => {
+                        act.send_close(ctx, err.into());
+                        ctx.stop();
+                    }
+                }
+            })
+        // session manager is dead?
+            .map_err(|_, act, ctx| {
+                act.send_close(ctx, CloseCode::InternalError);
+            })
+            .wait(ctx);
+    }
+}
+
+/// Http actor implementation
+impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
+{
+    type Context = ws::WebsocketContext<Self, SyncAddress<SM>>;
+
+    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+        if let Some(mut rec) = self.rec.take() {
+            rec.close();
+            ctx.state().send(Release{ses: rec});
+        }
+        true
     }
 }
 
@@ -136,7 +251,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
     fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         // process websocket messages
         match msg {
-            ws::Message::Ping(msg) => ws::WsWriter::pong(ctx, &msg),
+            ws::Message::Ping(msg) => ctx.pong(&msg),
             ws::Message::Text(text) => {
                 if text.is_empty() {
                     return
@@ -148,8 +263,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                     match serde_json::from_slice(text[1..text.len()-1].as_ref()) {
                         Ok(msgs) => msgs,
                         Err(_) => {
-                            ws::WsWriter::close(
-                                ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
+                            ctx.close(ws::CloseCode::Invalid, "Broken JSON encoding");
                             if let Some(mut rec) = self.rec.take() {
                                 rec.interrupted();
                                 ctx.state().send(Release{ses: rec});
@@ -162,8 +276,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                     match serde_json::from_slice(text[..].as_ref()) {
                         Ok(msgs) => msgs,
                         Err(_) => {
-                            ws::WsWriter::close(
-                                ctx, ws::CloseCode::Invalid,"Broken JSON encoding");
+                            ctx.close(ws::CloseCode::Invalid, "Broken JSON encoding");
                             if let Some(mut rec) = self.rec.take() {
                                 rec.interrupted();
                                 ctx.state().send(Release{ses: rec});
