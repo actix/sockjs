@@ -136,7 +136,6 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
 
     /// Close session
     pub fn close(&mut self) {
-        println!("SEND CLOSE");
         self.send_frame(Frame::Close(CloseCode::GoAway));
     }
 

@@ -80,6 +80,7 @@ impl<S, SM> HTMLFile<S, SM>
             let session = req.match_info().get("session").unwrap().to_owned();
             let mut resp = httpcodes::HTTPOk.build()
                 .force_close()
+                .no_chunking()
                 .content_type("text/html; charset=UTF-8")
                 .sockjs_no_cache()
                 .sockjs_session_cookie(&req)

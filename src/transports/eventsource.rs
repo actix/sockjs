@@ -41,6 +41,7 @@ impl<S, SM> EventSource<S, SM>
         let session = req.match_info().get("session").unwrap().to_owned();
         let mut resp = httpcodes::HTTPOk.build()
             .header(header::CONTENT_TYPE, "text/event-stream")
+            .no_chunking()
             .force_close()
             .sockjs_no_cache()
             .sockjs_session_cookie(&req)

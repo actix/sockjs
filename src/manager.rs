@@ -130,7 +130,6 @@ impl Record {
     }
 
     pub fn close(&mut self) {
-        println!("Record close");
         self.state = SessionState::Closed;
     }
 
@@ -259,7 +258,6 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
     fn handle(&mut self, msg: Release, _: &mut Context<Self>) {
         if let Some(entry) = self.sessions.get_mut(&msg.ses.sid) {
             self.idle.insert(Arc::clone(&msg.ses.sid));
-            println!("RELEASE SESSION: {:?}", msg.ses.state);
             let _ = match msg.ses.state {
                 SessionState::Closed =>
                     msg.ses.tx.unbounded_send(

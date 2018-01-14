@@ -41,8 +41,6 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
 {
     fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult
     {
-        println!("MSG: {:?}", msg);
-
         match *msg {
             Frame::Heartbeat => {
                 ctx.write("h\n");

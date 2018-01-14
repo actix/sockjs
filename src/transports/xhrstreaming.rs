@@ -81,7 +81,6 @@ impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
             .sockjs_no_cache()
             .sockjs_session_cookie(&req)
             .sockjs_cors_headers(req.headers())
-            .if_true(req.version() == Version::HTTP_11, |builder| {builder.chunked();})
             .take();
 
         let mut ctx = HttpContext::new(
