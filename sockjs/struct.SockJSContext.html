@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="generator" content="rustdoc">
+    <meta name="description" content="API documentation for the Rust `SockJSContext` struct in crate `sockjs`.">
+    <meta name="keywords" content="rust, rustlang, rust-lang, SockJSContext">
+
+    <title>sockjs::SockJSContext - Rust</title>
+
+    <link rel="stylesheet" type="text/css" href="../normalize.css">
+    <link rel="stylesheet" type="text/css" href="../rustdoc.css">
+    <link rel="stylesheet" type="text/css" href="../main.css">
+    
+
+    
+    
+</head>
+<body class="rustdoc struct">
+    <!--[if lte IE 8]>
+    <div class="warning">
+        This old browser is unsupported and will most likely display funky
+        things.
+    </div>
+    <![endif]-->
+
+    
+
+    <nav class="sidebar">
+        
+        <p class='location'>Struct SockJSContext</p><div class="block items"><ul><li><a href="#methods">Methods</a></li><li><a href="#implementations">Trait Implementations</a></li></ul></div><p class='location'><a href='index.html'>sockjs</a></p><script>window.sidebarCurrent = {name: 'SockJSContext', ty: 'struct', relpath: ''};</script><script defer src="sidebar-items.js"></script>
+    </nav>
+
+    <nav class="sub">
+        <form class="search-form js-only">
+            <div class="search-container">
+                <input class="search-input" name="search"
+                       autocomplete="off"
+                       placeholder="Click or press ‘S’ to search, ‘?’ for more options…"
+                       type="search">
+            </div>
+        </form>
+    </nav>
+
+    <section id='main' class="content">
+<h1 class='fqn'><span class='in-band'>Struct <a href='index.html'>sockjs</a>::<wbr><a class="struct" href=''>SockJSContext</a></span><span class='out-of-band'><span id='render-detail'>
+                   <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">
+                       [<span class='inner'>&#x2212;</span>]
+                   </a>
+               </span><a class='srclink' href='../src/sockjs/context.rs.html#49-57' title='goto source code'>[src]</a></span></h1>
+<pre class='rust struct'>pub struct SockJSContext&lt;A&gt; <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: <a class="trait" href="../sockjs/trait.Session.html" title="trait sockjs::Session">Session</a>,<br>&nbsp;&nbsp;&nbsp;&nbsp;A::Context: AsyncContext&lt;A&gt;,&nbsp;</span> { /* fields omitted */ }</pre><div class='docblock'><p>Sockjs session context</p>
+</div><h2 id='methods'>Methods</h2><h3 class='impl'><span class='in-band'><code>impl&lt;A&gt; <a class="struct" href="../sockjs/struct.SockJSContext.html" title="struct sockjs::SockJSContext">SockJSContext</a>&lt;A&gt; <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: <a class="trait" href="../sockjs/trait.Session.html" title="trait sockjs::Session">Session</a>&lt;Context = Self&gt;,&nbsp;</span></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/sockjs/context.rs.html#117-192' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.sid' class="method"><span id='sid.v' class='invisible'><code>fn <a href='#method.sid' class='fnname'>sid</a>(&amp;self) -&gt; &amp;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/arc/struct.Arc.html" title="struct alloc::arc::Arc">Arc</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;</code></span></h4>
+<div class='docblock'><p>Session id</p>
+</div><h4 id='method.send' class="method"><span id='send.v' class='invisible'><code>fn <a href='#method.send' class='fnname'>send</a>&lt;M&gt;(&amp;mut self, message: M) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;M: <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../sockjs/struct.Message.html" title="struct sockjs::Message">Message</a>&gt;,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Send message to peer</p>
+</div><h4 id='method.broadcast' class="method"><span id='broadcast.v' class='invisible'><code>fn <a href='#method.broadcast' class='fnname'>broadcast</a>&lt;M&gt;(&amp;mut self, message: M) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;M: <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../sockjs/struct.Message.html" title="struct sockjs::Message">Message</a>&gt;,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Send message to all sessions</p>
+</div><h4 id='method.close' class="method"><span id='close.v' class='invisible'><code>fn <a href='#method.close' class='fnname'>close</a>(&amp;mut self)</code></span></h4>
+<div class='docblock'><p>Close session</p>
+</div><h4 id='method.connected' class="method"><span id='connected.v' class='invisible'><code>fn <a href='#method.connected' class='fnname'>connected</a>(&amp;mut self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span></h4>
+<div class='docblock'><p>Check if transport is connected</p>
+</div></div><h2 id='implementations'>Trait Implementations</h2><h3 class='impl'><span class='in-band'><code>impl&lt;A&gt; ActorContext for <a class="struct" href="../sockjs/struct.SockJSContext.html" title="struct sockjs::SockJSContext">SockJSContext</a>&lt;A&gt; <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: <a class="trait" href="../sockjs/trait.Session.html" title="trait sockjs::Session">Session</a>&lt;Context = Self&gt;,&nbsp;</span></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/sockjs/context.rs.html#59-75' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.stop' class="method"><span id='stop.v' class='invisible'><code>fn <a href='#method.stop' class='fnname'>stop</a>(&amp;mut self)</code></span></h4>
+<div class='docblock'><p>Stop actor execution</p>
+</div><h4 id='method.terminate' class="method"><span id='terminate.v' class='invisible'><code>fn <a href='#method.terminate' class='fnname'>terminate</a>(&amp;mut self)</code></span></h4>
+<div class='docblock'><p>Terminate actor execution</p>
+</div><h4 id='method.state' class="method"><span id='state.v' class='invisible'><code>fn <a href='#method.state' class='fnname'>state</a>(&amp;self) -&gt; ActorState</code></span></h4>
+<div class='docblock'><p>Actor execution state</p>
+</div><h4 id='method.alive' class="method"><span id='alive.v' class='invisible'><code>fn <a href='#method.alive' class='fnname'>alive</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span></h4>
+<div class='docblock'><p>Check if execution context is alive</p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A&gt; AsyncContext&lt;A&gt; for <a class="struct" href="../sockjs/struct.SockJSContext.html" title="struct sockjs::SockJSContext">SockJSContext</a>&lt;A&gt; <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: <a class="trait" href="../sockjs/trait.Session.html" title="trait sockjs::Session">Session</a>&lt;Context = Self&gt;,&nbsp;</span></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/sockjs/context.rs.html#77-98' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.spawn' class="method"><span id='spawn.v' class='invisible'><code>fn <a href='#method.spawn' class='fnname'>spawn</a>&lt;F&gt;(&amp;mut self, fut: F) -&gt; SpawnHandle <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;F: ActorFuture&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Error = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Actor = A&gt; + 'static,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Spawn async future into context. Returns handle of the item, could be used for cancelling execution. <a href="#tymethod.spawn">Read more</a></p>
+</div><h4 id='method.wait' class="method"><span id='wait.v' class='invisible'><code>fn <a href='#method.wait' class='fnname'>wait</a>&lt;F&gt;(&amp;mut self, fut: F) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;F: ActorFuture&lt;Item = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Error = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>, Actor = A&gt; + 'static,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Spawn future into the context. Stop processing any of incoming events until this future resolves. <a href="#tymethod.wait">Read more</a></p>
+</div><h4 id='method.waiting' class="method"><span id='waiting.v' class='invisible'><code>fn <a href='#method.waiting' class='fnname'>waiting</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span></h4>
+<h4 id='method.cancel_future' class="method"><span id='cancel_future.v' class='invisible'><code>fn <a href='#method.cancel_future' class='fnname'>cancel_future</a>(&amp;mut self, handle: SpawnHandle) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span></h4>
+<div class='docblock'><p>Cancel future. idx is a value returned by <code>spawn</code> method.</p>
+</div><h4 id='method.address' class="method"><span id='address.v' class='invisible'><code>fn <a href='#method.address' class='fnname'>address</a>&lt;Address&gt;(&amp;mut self) -&gt; Address <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: ActorAddress&lt;A, Address&gt;,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Get actor address</p>
+</div><h4 id='method.add_future' class="method"><span id='add_future.v' class='invisible'><code>fn <a href='#method.add_future' class='fnname'>add_future</a>&lt;F&gt;(&amp;mut self, fut: F) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: Handler&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;&lt;F as <a class="trait" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html#associatedtype.Item" title="type futures::future::Future::Item">Item</a>, &lt;F as <a class="trait" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html#associatedtype.Error" title="type futures::future::Future::Error">Error</a>&gt;&gt;,<br>&nbsp;&nbsp;&nbsp;&nbsp;F: <a class="trait" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html" title="trait futures::future::Future">Future</a> + 'static,<br>&nbsp;&nbsp;&nbsp;&nbsp;&lt;F as <a class="trait" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html" title="trait futures::future::Future">Future</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/future/trait.Future.html#associatedtype.Item" title="type futures::future::Future::Item">Item</a>: ResponseType,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>This method allow to handle Future in similar way as normal actor messages. <a href="#method.add_future">Read more</a></p>
+</div><h4 id='method.add_stream' class="method"><span id='add_stream.v' class='invisible'><code>fn <a href='#method.add_stream' class='fnname'>add_stream</a>&lt;S&gt;(&amp;mut self, fut: S) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: Handler&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;&lt;S as <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html#associatedtype.Item" title="type futures::stream::Stream::Item">Item</a>, &lt;S as <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html#associatedtype.Error" title="type futures::stream::Stream::Error">Error</a>&gt;&gt;,<br>&nbsp;&nbsp;&nbsp;&nbsp;S: <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a> + 'static,<br>&nbsp;&nbsp;&nbsp;&nbsp;&lt;S as <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html#associatedtype.Item" title="type futures::stream::Stream::Item">Item</a>: ResponseType,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>This method is similar to <code>add_future</code> but works with streams. <a href="#method.add_stream">Read more</a></p>
+</div><h4 id='method.add_message_stream' class="method"><span id='add_message_stream.v' class='invisible'><code>fn <a href='#method.add_message_stream' class='fnname'>add_message_stream</a>&lt;S&gt;(&amp;mut self, fut: S) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: Handler&lt;&lt;S as <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html#associatedtype.Item" title="type futures::stream::Stream::Item">Item</a>&gt;,<br>&nbsp;&nbsp;&nbsp;&nbsp;S: <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a>&lt;Error = <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a>&gt; + 'static,<br>&nbsp;&nbsp;&nbsp;&nbsp;&lt;S as <a class="trait" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html" title="trait futures::stream::Stream">Stream</a>&gt;::<a class="type" href="https://docs.rs/futures/0.1/futures/stream/trait.Stream.html#associatedtype.Item" title="type futures::stream::Stream::Item">Item</a>: ResponseType,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>This method is similar to <code>add_stream</code> but it skips errors.</p>
+</div><h4 id='method.notify' class="method"><span id='notify.v' class='invisible'><code>fn <a href='#method.notify' class='fnname'>notify</a>&lt;M&gt;(&amp;mut self, msg: M) <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: Handler&lt;M&gt;,<br>&nbsp;&nbsp;&nbsp;&nbsp;M: ResponseType + 'static,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Send message <code>msg</code> to self.</p>
+</div><h4 id='method.notify_later' class="method"><span id='notify_later.v' class='invisible'><code>fn <a href='#method.notify_later' class='fnname'>notify_later</a>&lt;M&gt;(&amp;mut self, msg: M, after: <a class="struct" href="https://doc.rust-lang.org/nightly/std/time/duration/struct.Duration.html" title="struct std::time::duration::Duration">Duration</a>) -&gt; SpawnHandle <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: Handler&lt;M&gt;,<br>&nbsp;&nbsp;&nbsp;&nbsp;M: ResponseType + 'static,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Send message <code>msg</code> to self after specified period of time. Returns spawn handle which could be used for cancellation. Notification get cancelled if context&#39;s stop method get called. <a href="#method.notify_later">Read more</a></p>
+</div><h4 id='method.run_later' class="method"><span id='run_later.v' class='invisible'><code>fn <a href='#method.run_later' class='fnname'>run_later</a>&lt;F&gt;(&amp;mut self, dur: <a class="struct" href="https://doc.rust-lang.org/nightly/std/time/duration/struct.Duration.html" title="struct std::time::duration::Duration">Duration</a>, f: F) -&gt; SpawnHandle <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;F: <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnOnce.html" title="trait core::ops::function::FnOnce">FnOnce</a>(&amp;mut A, &amp;mut &lt;A as Actor&gt;::Context) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.tuple.html">()</a> + 'static,&nbsp;</span></code></span></h4>
+<div class='docblock'><p>Execute closure after specified period of time within same Actor and Context. Execution get cancelled if context&#39;s stop method get called. <a href="#method.run_later">Read more</a></p>
+</div></div><h3 class='impl'><span class='in-band'><code>impl&lt;A&gt; AsyncContextApi&lt;A&gt; for <a class="struct" href="../sockjs/struct.SockJSContext.html" title="struct sockjs::SockJSContext">SockJSContext</a>&lt;A&gt; <span class="where fmt-newline">where<br>&nbsp;&nbsp;&nbsp;&nbsp;A: <a class="trait" href="../sockjs/trait.Session.html" title="trait sockjs::Session">Session</a>&lt;Context = Self&gt;,&nbsp;</span></code></span><span class='out-of-band'><div class='ghost'></div><a class='srclink' href='../src/sockjs/context.rs.html#100-115' title='goto source code'>[src]</a></span></h3>
+<div class='impl-items'><h4 id='method.unsync_sender' class="method"><span id='unsync_sender.v' class='invisible'><code>fn <a href='#method.unsync_sender' class='fnname'>unsync_sender</a>(&amp;mut self) -&gt; UnboundedSender&lt;ContextProtocol&lt;A&gt;&gt;</code></span></h4>
+<h4 id='method.unsync_address' class="method"><span id='unsync_address.v' class='invisible'><code>fn <a href='#method.unsync_address' class='fnname'>unsync_address</a>(&amp;mut self) -&gt; Address&lt;A&gt;</code></span></h4>
+<h4 id='method.sync_address' class="method"><span id='sync_address.v' class='invisible'><code>fn <a href='#method.sync_address' class='fnname'>sync_address</a>(&amp;mut self) -&gt; SyncAddress&lt;A&gt;</code></span></h4>
+</div></section>
+    <section id='search' class="content hidden"></section>
+
+    <section class="footer"></section>
+
+    <aside id="help" class="hidden">
+        <div>
+            <h1 class="hidden">Help</h1>
+
+            <div class="shortcuts">
+                <h2>Keyboard Shortcuts</h2>
+
+                <dl>
+                    <dt>?</dt>
+                    <dd>Show this help dialog</dd>
+                    <dt>S</dt>
+                    <dd>Focus the search field</dd>
+                    <dt>&larrb;</dt>
+                    <dd>Move up in search results</dd>
+                    <dt>&rarrb;</dt>
+                    <dd>Move down in search results</dd>
+                    <dt>&#9166;</dt>
+                    <dd>Go to active search result</dd>
+                    <dt>+</dt>
+                    <dd>Collapse/expand all sections</dd>
+                </dl>
+            </div>
+
+            <div class="infos">
+                <h2>Search Tricks</h2>
+
+                <p>
+                    Prefix searches with a type followed by a colon (e.g.
+                    <code>fn:</code>) to restrict the search to a given type.
+                </p>
+
+                <p>
+                    Accepted types are: <code>fn</code>, <code>mod</code>,
+                    <code>struct</code>, <code>enum</code>,
+                    <code>trait</code>, <code>type</code>, <code>macro</code>,
+                    and <code>const</code>.
+                </p>
+
+                <p>
+                    Search functions by type signature (e.g.
+                    <code>vec -> usize</code> or <code>* -> vec</code>)
+                </p>
+            </div>
+        </div>
+    </aside>
+
+    
+
+    <script>
+        window.rootPath = "../";
+        window.currentCrate = "sockjs";
+    </script>
+    <script src="../main.js"></script>
+    <script defer src="../search-index.js"></script>
+</body>
+</html>
