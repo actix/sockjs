@@ -88,6 +88,10 @@ impl<A> AsyncContext<A> for SockJSContext<A> where A: Session<Context=Self>
         self.inner.wait(fut);
     }
 
+    fn waiting(&self) -> bool {
+        self.inner.wating()
+    }
+
     fn cancel_future(&mut self, handle: SpawnHandle) -> bool {
         self.inner.cancel_future(handle)
     }

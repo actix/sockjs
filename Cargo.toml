@@ -42,15 +42,15 @@ serde_derive = "1.0"
 log = "0.4"
 
 # actix
-actix = "^0.4.2"
-actix-web = "^0.3.1"
+actix = "^0.4.4"
+actix-web = "^0.3.2"
 
 [profile.release]
 lto = true
 opt-level = 3
 
 [dev-dependencies]
-env_logger = "0.4"
+env_logger = "0.5"
 skeptic = "0.13"
 
 [build-dependencies]
