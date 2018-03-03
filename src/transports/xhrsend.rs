@@ -14,7 +14,7 @@ use super::MAXSIZE;
 
 
 #[allow(non_snake_case)]
-pub fn XhrSend<S, SM>(req: HttpRequest<SyncAddress<SM>>)
+pub fn XhrSend<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                       -> Either<HttpResponse, Box<Future<Item=HttpResponse, Error=Error>>>
     where S: Session, SM: SessionManager<S>
 {
@@ -30,51 +30,51 @@ pub fn XhrSend<S, SM>(req: HttpRequest<SyncAddress<SM>>)
                   .unwrap())
     }
     else if *req.method() != Method::GET && *req.method() != Method::POST {
-        Either::A(httpcodes::HTTPForbidden.with_reason("Method is not allowed"))
+        Either::A(httpcodes::HttpForbidden.with_reason("Method is not allowed"))
     } else {
         Either::B(read(req))
     }
 }
 
-pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
+pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                    -> Box<Future<Item=HttpResponse, Error=Error>>
     where S: Session, SM: SessionManager<S>
 {
     let sid = req.match_info().get("session").unwrap().to_owned();
 
     Box::new(
-        req.body().limit(MAXSIZE)
+        req.clone().body().limit(MAXSIZE)
             .map_err(|e| Error::from(error::ErrorBadRequest(e)))
             .and_then(move |buf| {
                 let sid = Arc::new(sid);
 
                 // empty message
                 if buf.is_empty() {
-                    return Either::A(
-                        ok(httpcodes::HTTPInternalServerError.with_body("Payload expected.")))
+                    return Either::A(ok(
+                        httpcodes::HttpInternalServerError.with_body("Payload expected.")))
                 } else if buf != b"[]".as_ref() {
                     // deserialize json
                     let mut msgs: Vec<String> = match serde_json::from_slice(&buf) {
                         Ok(msgs) => msgs,
                         Err(_) => {
-                            return Either::A(
-                                ok(httpcodes::HTTPInternalServerError
-                                   .with_body("Broken JSON encoding.")))
+                            return Either::A(ok(
+                                httpcodes::HttpInternalServerError
+                                    .with_body("Broken JSON encoding.")))
                         }
                     };
 
                     if !msgs.is_empty() {
                         let last = msgs.pop().unwrap();
                         for msg in msgs {
-                            req.state().send(
+                            req.state().do_send(
                                 SessionMessage {
                                     sid: Arc::clone(&sid),
                                     msg: Message(msg) });
                         }
 
                         return Either::B(
-                            req.state().call_fut(SessionMessage { sid: Arc::clone(&sid),
-                                                                  msg: Message(last) })
+                            req.state().send(SessionMessage { sid: Arc::clone(&sid),
+                                                              msg: Message(last) })
                                 .from_err()
                                 .and_then(move |res| {
                                     match res {
@@ -88,7 +88,8 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
                                                .finish()
                                                .unwrap())
                                         },
-                                        Err(e) => Err(Error::from(error::ErrorNotFound(e))),
+                                        Err(_) =>
+                                            Err(Error::from(error::ErrorNotFound(()))),
                                     }
                                 }))
                     }

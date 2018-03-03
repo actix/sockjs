@@ -1,8 +1,7 @@
 use bytes::Bytes;
-use actix::ResponseType;
 use session::SessionError;
 
-#[derive(Debug)]
+#[derive(Debug, Message)]
 pub enum Frame {
     Open,
     Close(CloseCode),
@@ -25,11 +24,6 @@ impl Frame {
             _ => panic!(),
         }
     }
-}
-
-impl ResponseType for Frame {
-    type Item = ();
-    type Error = ();
 }
 
 impl From<String> for Frame {

@@ -29,14 +29,14 @@ pub struct EventSource<S, SM>
 impl<S, SM> EventSource<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn hb(&self, ctx: &mut HttpContext<Self, SyncAddress<SM>>) {
+    fn hb(&self, ctx: &mut HttpContext<Self, Addr<Syn, SM>>) {
         ctx.run_later(Duration::new(5, 0), |act, ctx| {
             act.send_heartbeat(ctx);
             act.hb(ctx);
         });
     }
 
-    pub fn init(req: HttpRequest<SyncAddress<SM>>, maxsize: usize) -> Result<HttpResponse>
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>, maxsize: usize) -> Result<HttpResponse>
     {
         let session = req.match_info().get("session").unwrap().to_owned();
         let mut resp = httpcodes::HTTPOk.build()
@@ -52,7 +52,7 @@ impl<S, SM> EventSource<S, SM>
                              sm: PhantomData,
                              size: 0, rec: None,
                              flags: Flags::empty(),
-                             maxsize: maxsize});
+                             maxsize});
         ctx.write("\r\n");
 
         // init transport, but aftre prelude only
@@ -71,11 +71,11 @@ impl<S, SM> EventSource<S, SM>
 impl<S, SM> Actor for EventSource<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self, SyncAddress<SM>>;
+    type Context = HttpContext<Self, Addr<Syn, SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
         self.release(ctx);
-        true
+        Running::Stop
     }
 }
 

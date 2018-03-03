@@ -26,8 +26,8 @@ impl Info {
 
     pub fn new(entropy: u32, websocket: bool, cookie_needed: bool) -> Info {
         Info {
-            entropy: entropy,
-            websocket: websocket,
+            entropy,
+            websocket,
             cookie_needed: cookie_needed,
             origins: vec!["*:*"],
         }

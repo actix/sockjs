@@ -45,12 +45,12 @@ impl Handler<Message> for Chat {
 
 fn main() {
     std::env::set_var("RUST_LOG", "actix_web=info");
-    let _ = env_logger::init();
+    env_logger::init();
 
     let sys = actix::System::new("sockjs-chat");
 
     // Sockjs sessions manager
-    let sm: SyncAddress<_> = SockJSManager::<Chat>::start_default();
+    let sm: Addr<Syn, _> = SockJSManager::<Chat>::start_default();
 
     HttpServer::new(
         move || {

@@ -5,31 +5,28 @@ use std::time::{Instant, Duration};
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 
 use actix::*;
+use actix::Message as ActixMessage;
 use protocol::Frame;
 use context::{SockJSContext, SockJSChannel, ChannelItem};
 use session::{Message, Session, SessionState, SessionError, CloseReason};
 
 #[doc(hidden)]
-pub trait SessionManager<S>: Actor +
+pub trait SessionManager<S>: Actor<Context=Context<Self>> +
     Handler<Acquire> + Handler<Release> + Handler<SessionMessage> {}
 
 /// Acquire message
 pub struct Acquire {
     sid: Arc<String>,
-    addr: Box<Subscriber<Broadcast> + Send>,
+    addr: Recipient<Syn, Broadcast>,
 }
 impl Acquire {
-    pub fn new(sid: String, addr: Box<Subscriber<Broadcast> + Send>) -> Self {
-        Acquire{
-            sid: Arc::new(sid),
-            addr: addr,
-        }
+    pub fn new(sid: String, addr: Recipient<Syn, Broadcast>) -> Self {
+        Acquire{addr, sid: Arc::new(sid)}
     }
 }
 
-impl ResponseType for Acquire {
-    type Item = (Record, UnboundedReceiver<ChannelItem>);
-    type Error = SessionError;
+impl ActixMessage for Acquire {
+    type Result = Result<(Record, UnboundedReceiver<ChannelItem>), SessionError>;
 }
 
 /// Release message
@@ -39,10 +36,14 @@ pub struct Release {
 }
 
 /// Session message
-#[derive(Message, Debug)]
+#[derive(Debug)]
 pub struct SessionMessage {
     pub sid: Arc<String>,
     pub msg: Message,
+}
+
+impl ActixMessage for SessionMessage {
+    type Result = Result<(), ()>;
 }
 
 /// Broadcast message to all sessions
@@ -120,12 +121,11 @@ pub struct Record {
 }
 
 impl Record {
-    fn new(id: Arc<String>, tx: UnboundedSender<SockJSChannel>) -> Record {
+    fn new(sid: Arc<String>, tx: UnboundedSender<SockJSChannel>) -> Record {
         Record {
-            sid: id,
+            sid, tx,
             state: SessionState::New,
             buffer: VecDeque::new(),
-            tx: tx,
         }
     }
 
@@ -145,9 +145,9 @@ impl Record {
 }
 
 struct Entry<S: Session> {
-    addr: SyncAddress<S>,
+    addr: Addr<Syn, S>,
     record: Option<Record>,
-    transport: Option<Box<Subscriber<Broadcast> + Send>>,
+    transport: Option<Recipient<Syn, Broadcast>>,
     /// heartbeat
     tick: Instant,
 }
@@ -220,7 +220,7 @@ impl<S: Session> Actor for SockJSManager<S> {
 
 #[doc(hidden)]
 impl<S: Session> Handler<Acquire> for SockJSManager<S> {
-    type Result = MessageResult<Acquire>;
+    type Result = Result<(Record, UnboundedReceiver<ChannelItem>), SessionError>;
 
     fn handle(&mut self, msg: Acquire, ctx: &mut Context<Self>) -> Self::Result {
         if let Some(entry) = self.sessions.get_mut(&msg.sid) {
@@ -238,7 +238,7 @@ impl<S: Session> Handler<Acquire> for SockJSManager<S> {
             (*self.factory)(), Arc::clone(&msg.sid), ctx.address());
         self.sessions.insert(
             Arc::clone(&msg.sid),
-            Entry{addr: addr,
+            Entry{addr,
                   record: None,
                   transport: Some(msg.addr),
                   tick: Instant::now(),
@@ -276,11 +276,11 @@ impl<S: Session> Handler<Release> for SockJSManager<S> {
 
 #[doc(hidden)]
 impl<S: Session> Handler<SessionMessage> for SockJSManager<S> {
-    type Result = MessageResult<SessionMessage>;
+    type Result = Result<(), ()>;
 
     fn handle(&mut self, msg: SessionMessage, _: &mut Context<Self>) -> Self::Result {
         if let Some(entry) = self.sessions.get_mut(&msg.sid) {
-            entry.addr.send(msg.msg);
+            entry.addr.do_send(msg.msg);
             Ok(())
         } else {
             Err(())

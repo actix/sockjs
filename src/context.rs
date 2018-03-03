@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::collections::VecDeque;
 
 use actix::dev::*;
-use actix::{ActorState};
+use actix::{ActorState, Message as ActixMessage};
 
 use serde_json;
 use futures::{Async, Future, Poll, Stream};
@@ -53,7 +53,7 @@ pub struct SockJSContext<A> where A: Session, A::Context: AsyncContext<A>
     rx: UnboundedReceiver<SockJSChannel>,
     tx: Option<UnboundedSender<ChannelItem>>,
     buf: VecDeque<BufItem>,
-    sm: SyncAddress<SockJSManager<A>>,
+    sm: Addr<Syn, SockJSManager<A>>,
 }
 
 impl<A> ActorContext for SockJSContext<A> where A: Session<Context=Self>
@@ -88,28 +88,24 @@ impl<A> AsyncContext<A> for SockJSContext<A> where A: Session<Context=Self>
         self.inner.wait(fut);
     }
 
+    #[doc(hidden)]
+        #[inline]
     fn waiting(&self) -> bool {
-        self.inner.wating()
+        self.inner.waiting() || self.inner.state() == ActorState::Stopping ||
+            self.inner.state() == ActorState::Stopped
     }
 
     fn cancel_future(&mut self, handle: SpawnHandle) -> bool {
         self.inner.cancel_future(handle)
     }
-}
-
-impl<A> AsyncContextApi<A> for SockJSContext<A> where A: Session<Context=Self> {
-    #[inline]
-    fn unsync_sender(&mut self) -> queue::unsync::UnboundedSender<ContextProtocol<A>> {
-        self.inner.unsync_sender()
-    }
 
     #[inline]
-    fn unsync_address(&mut self) -> Address<A> {
+    fn unsync_address(&mut self) -> Addr<Unsync, A> {
         self.inner.unsync_address()
     }
 
     #[inline]
-    fn sync_address(&mut self) -> SyncAddress<A> {
+    fn sync_address(&mut self) -> Addr<Syn, A> {
         self.inner.sync_address()
     }
 }
@@ -117,10 +113,10 @@ impl<A> AsyncContextApi<A> for SockJSContext<A> where A: Session<Context=Self> {
 impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
     #[doc(hidden)]
-    pub fn subscriber<M>(&mut self) -> Box<actix::Subscriber<M>>
-        where A: Handler<M>, M: ResponseType + 'static
+    pub fn recipient<M>(&mut self) -> Recipient<Unsync, M>
+        where A: Handler<M>, M: ActixMessage + 'static
     {
-        self.inner.subscriber()
+        self.inner.unsync_address().recipient()
     }
 
     /// Session id
@@ -135,7 +131,7 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
 
     /// Send message to all sessions
     pub fn broadcast<M>(&mut self, message: M) where M: Into<Message> {
-        self.sm.send(Broadcast::new(Frame::Message(message.into().0)));
+        self.sm.do_send(Broadcast::new(Frame::Message(message.into().0)));
     }
 
     /// Close session
@@ -193,16 +189,15 @@ impl<A> SockJSContext<A> where A: Session<Context=Self>
 
 impl<A> SockJSContext<A> where A: Session<Context=Self>
 {
-    pub(crate) fn start(session: A, sid: Arc<String>, addr: SyncAddress<SockJSManager<A>>)
-                        -> (SyncAddress<A>, UnboundedSender<SockJSChannel>)
+    pub(crate) fn start(session: A, sid: Arc<String>, addr: Addr<Syn, SockJSManager<A>>)
+                        -> (Addr<Syn, A>, UnboundedSender<SockJSChannel>)
     {
         let (tx, rx) = unbounded();
 
         let mut ctx = SockJSContext {
+            sid, rx,
             inner: ContextImpl::new(Some(session)),
-            sid: sid,
             tx: None,
-            rx: rx,
             buf: VecDeque::new(),
             sm: addr,
         };
@@ -275,23 +270,16 @@ impl<A> Future for SockJSContext<A> where A: Session<Context=Self>
                 Ok(Async::NotReady)
             },
             Ok(Async::Ready(())) => Ok(Async::Ready(())),
-            Err(e) => Err(e)
+            Err(()) => Err(())
         }
     }
 }
 
-#[doc(hidden)]
-impl<A> ToEnvelope<A> for SockJSContext<A>
-    where A: Session<Context=SockJSContext<A>>,
+impl<A, M> ToEnvelope<Syn, A, M> for SockJSContext<A>
+    where A: Session<Context=SockJSContext<A>> + Handler<M>,
+          M: ActixMessage + Send + 'static, M::Result: Send,
 {
-    fn pack<M>(msg: M,
-               tx: Option<Sender<Result<M::Item, M::Error>>>,
-               channel_on_drop: bool) -> Envelope<A>
-        where A: Handler<M>,
-              M: ResponseType + Send + 'static,
-              M::Item: Send,
-              M::Error: Send
-    {
-        RemoteEnvelope::new(msg, tx, channel_on_drop).into()
+    fn pack(msg: M, tx: Option<Sender<M::Result>>) -> SyncEnvelope<A> {
+        SyncEnvelope::new(msg, tx)
     }
 }

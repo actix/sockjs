@@ -59,7 +59,7 @@ pub struct XhrStreaming<S, SM>
 
 impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
 
-    pub fn init(req: HttpRequest<SyncAddress<SM>>, maxsize: usize) -> Result<HttpResponse> {
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>, maxsize: usize) -> Result<HttpResponse> {
         if *req.method() == Method::OPTIONS {
             return Ok(
                 httpcodes::HTTPNoContent
@@ -84,10 +84,10 @@ impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
             .take();
 
         let mut ctx = HttpContext::new(
-            req, XhrStreaming{s: PhantomData,
+            req, XhrStreaming{maxsize,
+                              s: PhantomData,
                               sm: PhantomData,
                               size: 0,
-                              maxsize: maxsize,
                               flags: Flags::empty(),
                               rec: None});
         ctx.write(OPEN_SEQ);
@@ -107,11 +107,11 @@ impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
 impl<S, SM> Actor for XhrStreaming<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self, SyncAddress<SM>>;
+    type Context = HttpContext<Self, Addr<Syn, SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
         self.release(ctx);
-        true
+        Running::Stop
     }
 }
 
@@ -119,7 +119,9 @@ impl<S, SM> Actor for XhrStreaming<S, SM>
 impl<S, SM> Transport<S, SM> for XhrStreaming<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult
+    fn send(&mut self,
+            ctx: &mut Self::Context,
+            msg: &Frame, record: &mut Record) -> SendResult
     {
         self.size += match *msg {
             Frame::Heartbeat => {

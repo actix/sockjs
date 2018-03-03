@@ -27,11 +27,11 @@ pub struct Xhr<S, SM>
 impl<S, SM> Actor for Xhr<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self, SyncAddress<SM>>;
+    type Context = HttpContext<Self, Addr<Syn, SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
         self.release(ctx);
-        true
+        Running::Stop
     }
 }
 
@@ -94,7 +94,7 @@ impl<S, SM> Transport<S, SM> for Xhr<S, SM>
 impl<S, SM> Xhr<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse>
     {
         if *req.method() == Method::OPTIONS {
             return Ok(

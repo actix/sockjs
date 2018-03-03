@@ -33,18 +33,18 @@ pub struct JSONPolling<S, SM>
 impl<S, SM> Actor for JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    type Context = HttpContext<Self, SyncAddress<SM>>;
+    type Context = HttpContext<Self, Addr<Syn, SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
         self.release(ctx);
-        true
+        Running::Stop
     }
 }
 
 impl<S, SM>  JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>
 {
-    fn write(&self, s: &str, ctx: &mut HttpContext<Self, SyncAddress<SM>>) {
+    fn write(&self, s: &str, ctx: &mut HttpContext<Self, Addr<Syn, SM>>) {
         ctx.write(format!("/**/{}({});\r\n",
                           self.callback, serde_json::to_string(s).unwrap()))
     }
@@ -107,7 +107,7 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
 impl<S, SM> JSONPolling<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse>
     {
         lazy_static! {
             static ref CHECK: Regex = Regex::new(r"^[a-zA-Z0-9_\.]+$").unwrap();
@@ -139,7 +139,7 @@ impl<S, SM> JSONPolling<S, SM>
                                             sm: PhantomData,
                                             rec: None,
                                             flags: Flags::empty(),
-                                            callback: callback};
+                                            callback};
             // init transport
             transport.init_transport(session, &mut ctx);
 
@@ -171,7 +171,7 @@ impl<S, SM> Handler<Broadcast> for JSONPolling<S, SM>
 }
 
 #[allow(non_snake_case)]
-pub fn JSONPollingSend<S, SM>(req: HttpRequest<SyncAddress<SM>>)
+pub fn JSONPollingSend<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                               -> Either<HttpResponse, Box<Future<Item=HttpResponse, Error=Error>>>
     where S: Session, SM: SessionManager<S>,
 {
@@ -183,14 +183,14 @@ pub fn JSONPollingSend<S, SM>(req: HttpRequest<SyncAddress<SM>>)
 
 }
 
-pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
+pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                    -> Box<Future<Item=HttpResponse, Error=Error>>
     where S: Session, SM: SessionManager<S>
 {
     let sid = req.match_info().get("session").unwrap().to_owned();
 
     Box::new(
-        req.body().limit(MAXSIZE)
+        req.clone().body().limit(MAXSIZE)
             .map_err(|e| Error::from(error::ErrorBadRequest(e)))
             .and_then(move |buf| {
                 let sid = Arc::new(sid);
@@ -246,16 +246,15 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
                     } else {
                         let last = msgs.pop().unwrap();
                         for msg in msgs {
-                            req.state().send(
+                            req.state().do_send(
                                 SessionMessage {
                                     sid: Arc::clone(&sid),
                                     msg: Message(msg) });
                         }
 
                         Either::B(
-                            req.state().call_fut(
-                                SessionMessage { sid: Arc::clone(&sid),
-                                                 msg: Message(last) })
+                            req.state().send(SessionMessage { sid: Arc::clone(&sid),
+                                                              msg: Message(last) })
                                 .from_err()
                                 .and_then(move |res| {
                                     match res {
@@ -268,7 +267,8 @@ pub fn read<S, SM>(req: HttpRequest<SyncAddress<SM>>)
                                                .body("ok")
                                                .unwrap())
                                         },
-                                        Err(e) => Err(Error::from(error::ErrorNotFound(e))),
+                                        Err(_) =>
+                                            Err(Error::from(error::ErrorNotFound(()))),
                                     }
                                 }))
                     }

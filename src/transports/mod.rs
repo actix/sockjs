@@ -33,7 +33,7 @@ bitflags! {
     }
 }
 
-type TransportContext<T, SM> = HttpContext<T, SyncAddress<SM>>;
+type TransportContext<T, SM> = HttpContext<T, Addr<Syn, SM>>;
 
 /// Result of `Transport::send` method
 #[derive(PartialEq)]
@@ -60,7 +60,7 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
             if !ctx.connected() {
                 rec.interrupted();
             }
-            ctx.state().send(Release{ses: rec});
+            ctx.state().do_send(Release{ses: rec});
         }
         ctx.stop();
     }
@@ -139,8 +139,9 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
 
     fn init_transport(&mut self, session: String, ctx: &mut TransportContext<Self, SM>) {
         // acquire session
-        let addr = ctx.sync_subscriber();
-        ctx.state().call(self, Acquire::new(session, addr))
+        let addr: Addr<Syn, _> = ctx.address();
+        ctx.state().send(Acquire::new(session, addr.recipient()))
+            .into_actor(self)
             .map(|res, act, ctx| {
                 match res {
                     Ok(mut rec) => {
@@ -174,12 +175,12 @@ trait Transport<S, SM>: Actor<Context=TransportContext<Self, SM>> +
 
                             SessionState::Interrupted => {
                                 act.send(ctx, &Frame::Close(CloseCode::Interrupted), &mut rec.0);
-                                ctx.state().send(Release{ses: rec.0});
+                                ctx.state().do_send(Release{ses: rec.0});
                             },
 
                             SessionState::Closed => {
                                 act.send(ctx, &Frame::Close(CloseCode::GoAway), &mut rec.0);
-                                ctx.state().send(Release{ses: rec.0});
+                                ctx.state().do_send(Release{ses: rec.0});
                             }
                         }
                     },

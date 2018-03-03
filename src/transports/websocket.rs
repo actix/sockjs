@@ -24,14 +24,13 @@ pub struct Websocket<S, SM>
 
 impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
 {
-    pub fn init(req: HttpRequest<SyncAddress<SM>>) -> Result<HttpResponse>
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse>
     {
         let mut resp = ws::handshake(&req)?;
-        let stream = ws::WsStream::new(req.payload().readany());
         let session = req.match_info().get("session").unwrap().to_owned();
 
-        let mut ctx = ws::WebsocketContext::from_request(req);
-        ctx.add_message_stream(stream);
+        let mut ctx = ws::WebsocketContext::from_request(req.clone());
+        ctx.add_stream(ws::WsStream::new(req));
 
         // init transport
         let mut tr = Websocket{s: PhantomData,
@@ -43,7 +42,7 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
         Ok(resp.body(ctx.actor(tr))?)
     }
 
-    fn send(&mut self, ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>,
+    fn send(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
             msg: &Frame, record: &mut Record) -> SendResult
     {
         match *msg {
@@ -51,10 +50,10 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
                 ctx.text("h");
             },
             Frame::Message(ref s) => {
-                ctx.text(&format!("a[{:?}]", s));
+                ctx.text(format!("a[{:?}]", s));
             }
             Frame::MessageVec(ref s) => {
-                ctx.text(&format!("a{}", s));
+                ctx.text(format!("a{}", s));
             }
             Frame::MessageBlob(_) => {
                 // ctx.write(format!("a{}\n", s));
@@ -64,16 +63,16 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
             },
             Frame::Close(code) => {
                 record.close();
-                ctx.text(&format!("c[{},{:?}]\n", code.num(), code.reason()));
+                ctx.text(format!("c[{},{:?}]\n", code.num(), code.reason()));
             }
         };
 
         SendResult::Continue
     }
 
-    fn send_close(&mut self, ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>,
+    fn send_close(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
                   code: CloseCode) {
-        ctx.text(&format!("c[{},{:?}]", code.num(), code.reason()));
+        ctx.text(format!("c[{},{:?}]", code.num(), code.reason()));
     }
 
     fn session_record(&mut self) -> &mut Option<Record> {
@@ -85,18 +84,18 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
     }
 
     /// Stop transport and release session
-    fn release(&mut self, ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>) {
+    fn release(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>) {
         if let Some(mut rec) = self.session_record().take() {
             if !ctx.connected() {
                 rec.interrupted();
             }
-            ctx.state().send(Release{ses: rec});
+            ctx.state().do_send(Release{ses: rec});
         }
         ctx.stop();
     }
 
     fn handle_message(&mut self, msg: ChannelItem,
-                      ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>) {
+                      ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>) {
         match msg {
             ChannelItem::Frame(msg) => {
                 if let Some(mut rec) = self.session_record().take() {
@@ -133,7 +132,7 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
 
     /// Send sockjs frame
     fn send_buffered(&mut self,
-                     ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>,
+                     ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
                      record: &mut Record) -> SendResult {
         while !record.buffer.is_empty() {
             if let Some(msg) = record.buffer.pop_front() {
@@ -146,10 +145,11 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
     }
 
     fn init_transport(&mut self, session: String,
-                      ctx: &mut ws::WebsocketContext<Self, SyncAddress<SM>>) {
+                      ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>) {
         // acquire session
-        let addr = ctx.sync_subscriber();
-        ctx.state().call(self, Acquire::new(session, addr))
+        let addr: Addr<Syn, _> = ctx.address();
+        ctx.state().send(Acquire::new(session, addr.recipient()))
+            .into_actor(self)
             .map(|res, act, ctx| {
                 match res {
                     Ok(mut rec) => {
@@ -183,12 +183,12 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
 
                             SessionState::Interrupted => {
                                 act.send(ctx, &Frame::Close(CloseCode::Interrupted), &mut rec.0);
-                                ctx.state().send(Release{ses: rec.0});
+                                ctx.state().do_send(Release{ses: rec.0});
                             },
 
                             SessionState::Closed => {
                                 act.send(ctx, &Frame::Close(CloseCode::GoAway), &mut rec.0);
-                                ctx.state().send(Release{ses: rec.0});
+                                ctx.state().do_send(Release{ses: rec.0});
                             }
                         }
                     },
@@ -209,14 +209,14 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
 /// Http actor implementation
 impl<S, SM> Actor for Websocket<S, SM> where S: Session, SM: SessionManager<S>
 {
-    type Context = ws::WebsocketContext<Self, SyncAddress<SM>>;
+    type Context = ws::WebsocketContext<Self, Addr<Syn, SM>>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> bool {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
         if let Some(mut rec) = self.rec.take() {
             rec.close();
-            ctx.state().send(Release{ses: rec});
+            ctx.state().do_send(Release{ses: rec});
         }
-        true
+        Running::Stop
     }
 }
 
@@ -243,10 +243,16 @@ impl<S, SM> Handler<Broadcast> for Websocket<S, SM>
     }
 }
 
-impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
+impl<S, SM> StreamHandler<ws::Message, ws::ProtocolError> for Websocket<S, SM>
     where S: Session, SM: SessionManager<S>,
 {
-    type Result = ();
+    fn error(&mut self, _: ws::ProtocolError, ctx: &mut Self::Context) -> Running {
+        if let Some(mut rec) = self.rec.take() {
+            rec.interrupted();
+            ctx.state().do_send(Release{ses: rec});
+        }
+        Running::Stop
+    }
 
     fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         // process websocket messages
@@ -266,7 +272,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                             ctx.close(ws::CloseCode::Invalid, "Broken JSON encoding");
                             if let Some(mut rec) = self.rec.take() {
                                 rec.interrupted();
-                                ctx.state().send(Release{ses: rec});
+                                ctx.state().do_send(Release{ses: rec});
                             }
                             ctx.stop();
                             return
@@ -279,7 +285,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                             ctx.close(ws::CloseCode::Invalid, "Broken JSON encoding");
                             if let Some(mut rec) = self.rec.take() {
                                 rec.interrupted();
-                                ctx.state().send(Release{ses: rec});
+                                ctx.state().do_send(Release{ses: rec});
                             }
                             ctx.stop();
                             return
@@ -288,7 +294,7 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
                 };
 
                 if let Some(ref rec) = self.rec {
-                    ctx.state().send(
+                    ctx.state().do_send(
                         SessionMessage {
                             sid: Arc::clone(&rec.sid),
                             msg: Message(msg)
@@ -298,17 +304,10 @@ impl<S, SM> Handler<ws::Message> for Websocket<S, SM>
             ws::Message::Binary(_) => {
                 error!("Binary messages are not supported");
             },
-            ws::Message::Closed => {
+            ws::Message::Close(_) => {
                 if let Some(mut rec) = self.rec.take() {
                     rec.close();
-                    ctx.state().send(Release{ses: rec});
-                }
-                ctx.stop();
-            },
-            ws::Message::Error => {
-                if let Some(mut rec) = self.rec.take() {
-                    rec.interrupted();
-                    ctx.state().send(Release{ses: rec});
+                    ctx.state().do_send(Release{ses: rec});
                 }
                 ctx.stop();
             },

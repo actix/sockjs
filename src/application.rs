@@ -4,13 +4,12 @@ use std::marker::PhantomData;
 use std::collections::HashSet;
 
 use md5;
-use regex::RegexSet;
 use rand::{self, Rng, ThreadRng};
 use http::{header, Method};
 use futures::future::Either;
-use actix::{Actor, SyncAddress};
+use actix::{Actor, Addr, Syn};
 use actix_web::dev::{Pattern, Handler};
-use actix_web::{httpcodes, HttpRequest, Reply};
+use actix_web::{httpcodes, HttpRequest, HttpMessage, Reply};
 
 use protocol;
 use transports;
@@ -26,11 +25,10 @@ pub struct SockJS<A, SM, S=()>
     where A: Actor<Context=SockJSContext<A>> + Session,
           SM: SessionManager<A>,
 {
-    manager: Rc<SyncAddress<SM>>,
+    manager: Rc<Addr<Syn, SM>>,
     act: PhantomData<A>,
     state: PhantomData<S>,
     rng: RefCell<ThreadRng>,
-    router: RegexSet,
     patterns: Vec<Pattern>,
     iframe_html: Rc<String>,
     iframe_html_md5: String,
@@ -49,7 +47,7 @@ const ROUTES: [RouteType; 5] = [
 const PATTERNS: [&str; 5] = [
     "info",
     "{server}/{session}/{transport}",
-    "^websocket",
+    "websocket",
     "iframe.html",
     "iframe{version}.html"];
 
@@ -61,19 +59,18 @@ impl<A, SM, S> SockJS<A, SM, S>
 {
     /// Create new sockjs application. Sockjs application requires
     /// Session manager's address.
-    pub fn new(manager: SyncAddress<SM>) -> Self
+    pub fn new(manager: Addr<Syn, SM>) -> Self
     {
         let html = protocol::IFRAME_HTML.to_owned();
         let digest = md5::compute(&html);
-        let patterns: Vec<_> = PATTERNS.iter().map(|s| Pattern::new("", s, "")).collect();
-        let regset = RegexSet::new(patterns.iter().map(|p| p.pattern())).unwrap();
+        let patterns: Vec<_> = PATTERNS.iter()
+            .map(|s| Pattern::with_prefix("", s, "")).collect();
 
-        SockJS { act: PhantomData,
+        SockJS { patterns,
+                 act: PhantomData,
                  state: PhantomData,
                  rng: RefCell::new(rand::thread_rng()),
                  manager: Rc::new(manager),
-                 router: regset,
-                 patterns: patterns,
                  iframe_html: Rc::new(html),
                  iframe_html_md5: format!("{:x}", digest),
                  disabled_transports: HashSet::new(),
@@ -119,28 +116,36 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
 {
     type Result = Reply;
 
-    fn handle(&mut self, mut req: HttpRequest<S>) -> Reply {
+    fn handle(&mut self, req: HttpRequest<S>) -> Reply {
         let idx = if let Some(path) = req.match_info().get("tail") {
             if path.is_empty() {
-                return httpcodes::HTTPOk
+                return httpcodes::HttpOk
                     .build()
                     .content_type("text/plain; charset=UTF-8")
                     .body("Welcome to SockJS!\n").into()
             }
 
-            if let Some(idx) = self.router.matches(path).into_iter().next() {
+            let mut i = None;
+            let mut req2 = req.clone();
+            for (idx, pattern) in self.patterns.iter().enumerate() {
+                if pattern.match_with_params(path, req2.match_info_mut()) {
+                    i = Some(idx)
+                }
+            }
+
+            if let Some(idx) = i {
                 idx
             } else {
-                return httpcodes::HTTPNotFound.into()
+                return httpcodes::HttpNotFound.into()
             }
         } else {
-            return httpcodes::HTTPNotFound.into()
+            return httpcodes::HttpNotFound.into()
         };
 
         match ROUTES[idx] {
             RouteType::Info => {
                 if *req.method() == Method::GET {
-                    httpcodes::HTTPOk
+                    httpcodes::HttpOk
                         .build()
                         .content_type("application/json;charset=UTF-8")
                         .sockjs_no_cache()
@@ -150,7 +155,7 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                             !self.disabled_transports.contains("websocket"),
                             self.cookie_needed)).into()
                 } else if *req.method() == Method::OPTIONS {
-                    httpcodes::HTTPNoContent
+                    httpcodes::HttpNoContent
                         .build()
                         .content_type("application/json;charset=UTF-8")
                         .sockjs_cache_headers()
@@ -159,19 +164,19 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                         .sockjs_session_cookie(&req)
                         .finish().into()
                 } else {
-                    httpcodes::HTTPMethodNotAllowed.into()
+                    httpcodes::HttpMethodNotAllowed.into()
                 }
             },
             RouteType::IFrame => {
                 if req.headers().contains_key(header::IF_NONE_MATCH) {
-                    httpcodes::HTTPNotModified
+                    httpcodes::HttpNotModified
                         .build()
                         .content_type("")
                         .sockjs_cache_headers()
                         .finish()
                         .into()
                 } else {
-                    httpcodes::HTTPOk
+                    httpcodes::HttpOk
                         .build()
                         .content_type("text/html;charset=UTF-8")
                         .header(header::ETAG, self.iframe_html_md5.as_str())
@@ -182,11 +187,9 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
             },
             RouteType::Transport => {
                 let req2 = req.change_state(Rc::clone(&self.manager));
-                self.patterns[idx].update_match_info(&mut req, req2.prefix_len());
-
                 let tr = req.match_info().get("transport").unwrap().to_owned();
                 if self.disabled_transports.contains(&tr) {
-                    return httpcodes::HTTPNotFound.into()
+                    return httpcodes::HttpNotFound.into()
                 }
 
                 // check valid session and server params
@@ -194,7 +197,7 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                     let sid = req.match_info().get("session").unwrap();
                     let server = req.match_info().get("server").unwrap();
                     if sid.is_empty() || sid.contains('.') || server.contains('.') {
-                        return httpcodes::HTTPNotFound.into()
+                        return httpcodes::HttpNotFound.into()
                     }
                     trace!("sockjs transport: {}, session: {}, srv: {}", tr, sid, server);
                 }

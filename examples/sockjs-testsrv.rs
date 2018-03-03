@@ -48,7 +48,6 @@ impl Default for Close {
 impl Session for Close {
 
     fn opened(&mut self, ctx: &mut SockJSContext<Self>) {
-        println!("actor close opened");
         ctx.close()
     }
 }
@@ -57,7 +56,6 @@ impl Handler<Message> for Close {
     type Result = ();
 
     fn handle(&mut self, _: Message, ctx: &mut sockjs::SockJSContext<Self>) {
-        println!("actor close handle");
         ctx.close()
     }
 }
@@ -67,12 +65,12 @@ fn main() {
     if ::std::env::var("RUST_LOG").is_err() {
         ::std::env::set_var("RUST_LOG", "actix_web=info");
     }
-    let _ = env_logger::init();
+    env_logger::init();
 
     let sys = actix::System::new("sockjs-example");
 
-    let sm: SyncAddress<_> = SockJSManager::<Echo>::start_default();
-    let cl: SyncAddress<_> = SockJSManager::<Close>::start_default();
+    let sm: Addr<Syn, _> = SockJSManager::<Echo>::start_default();
+    let cl: Addr<Syn, _> = SockJSManager::<Close>::start_default();
 
     HttpServer::new(
         move || Application::new()
@@ -88,7 +86,7 @@ fn main() {
                 "/cookie_needed_echo",
                 sockjs::SockJS::new(sm.clone()).cookie_needed(true))
             .resource("/exit.html", |r| r.f(|_| {
-                Arbiter::system().send(actix::msgs::SystemExit(0));
+                Arbiter::system().do_send(actix::msgs::SystemExit(0));
                 httpcodes::HTTPOk})))
         .bind("127.0.0.1:52081").unwrap()
         .start();
