@@ -5,7 +5,7 @@
 * [API Documentation](http://actix.github.io/sockjs/sockjs/)
 * Cargo package: [sockjs](https://crates.io/crates/sockjs)
 * SockJS is built with [Actix web](https://github.com/actix/actix-web)
-* Minimum supported Rust version: 1.20 or later
+* Minimum supported Rust version: 1.21 or later
 
 ---
 
@@ -17,7 +17,7 @@ To use `sockjs`, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-sockjs = "0.1"
+sockjs = "0.2"
 ```
 
 ## Supported transports
@@ -68,12 +68,12 @@ impl Session for Chat {
 
 /// Session has to be able to handle `sockjs::Message` messages
 impl Handler<Message> for Chat {
+    type Result = ();
+
     fn handle(&mut self, msg: Message, ctx: &mut SockJSContext<Self>)
-              -> Response<Self, Message>
     {
         // broadcast message to all sessions
         ctx.broadcast(msg);
-        Self::empty()
     }
 }
 
@@ -82,18 +82,19 @@ fn main() {
     let sys = actix::System::new("sockjs-chat");
 
     // SockJS sessions manager
-    let sm: SyncAddress<_> = SockJSManager::<Chat>::start_default();
+    let sm: Addr<Syn, _> = SockJSManager::<Chat>::start_default();
 
-    HttpServer::new(
-        Application::default("/")
+    HttpServer::new(move || {
+        let manager = sm.clone();
+        Application::new()
             // register SockJS application
-            .route_handler(
-                "/sockjs/", sockjs::SockJS::<Chat, _>::new(sm.clone())))
-        .serve::<_, ()>("127.0.0.1:8080").unwrap();
+            .handler(
+                "/sockjs/", sockjs::SockJS::new(manager.clone()))})
+        .bind("127.0.0.1:8080").unwrap()
+        .start();
 
-    Arbiter::system().send(msgs::SystemExit(0));
-    let _ = sys.run();
+    // let _ = sys.run();
 }
 ```
 
-[Full chat example](https://github.com/fafhrd91/actix-sockjs/blob/master/examples/chat.rs)
+[Full chat example](https://github.com/actix/actix-sockjs/blob/master/examples/chat.rs)
