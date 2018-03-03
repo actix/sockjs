@@ -38,7 +38,7 @@ before_script:
   - export PATH=$PATH:~/.cargo/bin
 
 script:
-  - USE_SKEPTIC=1 cargo test
+  - cargo test
   - cargo run --example sockjs-testsrv &
   - sleep 10
   - cd protocol && python ./sockjs-protocol.py
