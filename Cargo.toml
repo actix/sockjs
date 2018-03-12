@@ -1,6 +1,6 @@
 [package]
 name = "sockjs"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Nikolay Kim <fafhrd91@gmail.com>"]
 description = "SockJS server for Actix"
 readme = "README.md"
@@ -43,7 +43,7 @@ log = "0.4"
 
 # actix
 actix = "^0.5.1"
-actix-web = "^0.4.2"
+actix-web = "^0.4.7"
 
 [profile.release]
 lto = true

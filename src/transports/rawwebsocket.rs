@@ -52,7 +52,7 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
                 ctx.ping("");
             },
             Frame::Message(ref s) | Frame::MessageVec(ref s) => {
-                ctx.text(s.as_str());
+                ctx.text(s);
             }
             Frame::MessageBlob(ref b) => {
                 ctx.binary(b.clone());
