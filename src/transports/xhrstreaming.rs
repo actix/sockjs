@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 
 use actix::*;
 use actix_web::*;
-use http::header::ACCESS_CONTROL_ALLOW_METHODS;
+use actix_web::http::Method;
+use actix_web::http::header::ACCESS_CONTROL_ALLOW_METHODS;
 
 use context::ChannelItem;
 use protocol::{Frame, CloseCode};
@@ -62,20 +63,19 @@ impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
     pub fn init(req: HttpRequest<Addr<Syn, SM>>, maxsize: usize) -> Result<HttpResponse> {
         if *req.method() == Method::OPTIONS {
             return Ok(
-                httpcodes::HTTPNoContent
-                    .build()
+                HttpResponse::NoContent()
                     .content_type("application/jsonscript; charset=UTF-8")
                     .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
                     .sockjs_cache_headers()
                     .sockjs_cors_headers(req.headers())
                     .sockjs_session_cookie(&req)
-                    .finish()?)
+                    .finish())
         } else if *req.method() != Method::POST {
-            return Ok(httpcodes::HTTPNotFound.into())
+            return Ok(HttpResponse::NotFound().into())
         }
 
         let session = req.match_info().get("session").unwrap().to_owned();
-        let mut resp = httpcodes::HTTPOk.build()
+        let mut resp = HttpResponse::Ok()
             .content_type("application/javascript; charset=UTF-8")
             .force_close()
             .sockjs_no_cache()
@@ -99,7 +99,7 @@ impl<S, SM> XhrStreaming<S, SM> where S: Session, SM: SessionManager<S> {
             });
         }).wait(&mut ctx);
 
-        Ok(resp.body(ctx)?)
+        Ok(resp.body(ctx))
     }
 }
 

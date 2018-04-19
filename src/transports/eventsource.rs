@@ -39,7 +39,7 @@ impl<S, SM> EventSource<S, SM>
     pub fn init(req: HttpRequest<Addr<Syn, SM>>, maxsize: usize) -> Result<HttpResponse>
     {
         let session = req.match_info().get("session").unwrap().to_owned();
-        let mut resp = httpcodes::HTTPOk.build()
+        let mut resp = HttpResponse::Ok()
             .header(header::CONTENT_TYPE, "text/event-stream")
             .no_chunking()
             .force_close()
@@ -63,7 +63,7 @@ impl<S, SM> EventSource<S, SM>
             });
         }).wait(&mut ctx);
 
-        Ok(resp.body(ctx)?)
+        Ok(resp.body(ctx))
     }
 }
 

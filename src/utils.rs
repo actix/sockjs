@@ -1,6 +1,6 @@
 use time;
 use actix_web::HttpRequest;
-use actix_web::headers::Cookie;
+use actix_web::http::Cookie;
 use actix_web::dev::HttpResponseBuilder;
 use http::header::HeaderMap;
 use http::header::{EXPIRES, ORIGIN, CACHE_CONTROL,
@@ -28,7 +28,7 @@ impl Info {
         Info {
             entropy,
             websocket,
-            cookie_needed: cookie_needed,
+            cookie_needed,
             origins: vec!["*:*"],
         }
     }

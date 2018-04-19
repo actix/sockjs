@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use actix::*;
 use actix_web::*;
+use actix_web::http::Method;
 use serde_json;
 use futures::future::{ok, Future, Either};
 use http::header::ACCESS_CONTROL_ALLOW_METHODS;
@@ -19,18 +20,16 @@ pub fn XhrSend<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
     where S: Session, SM: SessionManager<S>
 {
     if *req.method() == Method::OPTIONS {
-        Either::A(httpcodes::HTTPNoContent
-                  .build()
+        Either::A(HttpResponse::NoContent()
                   .content_type("application/jsonscript; charset=UTF-8")
                   .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
                   .sockjs_cache_headers()
                   .sockjs_cors_headers(req.headers())
                   .sockjs_session_cookie(&req)
-                  .finish()
-                  .unwrap())
+                  .finish())
     }
     else if *req.method() != Method::GET && *req.method() != Method::POST {
-        Either::A(httpcodes::HttpForbidden.with_reason("Method is not allowed"))
+        Either::A(HttpResponse::Forbidden().reason("Method is not allowed").finish())
     } else {
         Either::B(read(req))
     }
@@ -44,22 +43,22 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
 
     Box::new(
         req.clone().body().limit(MAXSIZE)
-            .map_err(|e| Error::from(error::ErrorBadRequest(e)))
+            .map_err(error::ErrorBadRequest)
             .and_then(move |buf| {
                 let sid = Arc::new(sid);
 
                 // empty message
                 if buf.is_empty() {
                     return Either::A(ok(
-                        httpcodes::HttpInternalServerError.with_body("Payload expected.")))
+                        HttpResponse::InternalServerError().body("Payload expected.")))
                 } else if buf != b"[]".as_ref() {
                     // deserialize json
                     let mut msgs: Vec<String> = match serde_json::from_slice(&buf) {
                         Ok(msgs) => msgs,
                         Err(_) => {
                             return Either::A(ok(
-                                httpcodes::HttpInternalServerError
-                                    .with_body("Broken JSON encoding.")))
+                                HttpResponse::InternalServerError()
+                                    .body("Broken JSON encoding.")))
                         }
                     };
 
@@ -79,29 +78,25 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                                 .and_then(move |res| {
                                     match res {
                                         Ok(_) => {
-                                            Ok(httpcodes::HTTPNoContent
-                                               .build()
+                                            Ok(HttpResponse::NoContent()
                                                .content_type("text/plain; charset=UTF-8")
                                                .sockjs_no_cache()
                                                .sockjs_cors_headers(req.headers())
                                                .sockjs_session_cookie(&req)
-                                               .finish()
-                                               .unwrap())
+                                               .finish())
                                         },
                                         Err(_) =>
-                                            Err(Error::from(error::ErrorNotFound(()))),
+                                            Err(error::ErrorNotFound(())),
                                     }
                                 }))
                     }
                 }
 
-                Either::A(ok(httpcodes::HTTPNoContent
-                             .build()
+                Either::A(ok(HttpResponse::NoContent()
                              .content_type("text/plain; charset=UTF-8")
                              .sockjs_no_cache()
                              .sockjs_cors_headers(req.headers())
                              .sockjs_session_cookie(&req)
-                             .finish()
-                             .unwrap()))
+                             .finish()))
             }))
 }

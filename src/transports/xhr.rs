@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use actix::*;
 use actix_web::*;
+use actix_web::http::Method;
 use serde_json;
 use http::header::{self, ACCESS_CONTROL_ALLOW_METHODS};
 
@@ -98,22 +99,20 @@ impl<S, SM> Xhr<S, SM>
     {
         if *req.method() == Method::OPTIONS {
             return Ok(
-                httpcodes::HTTPNoContent
-                    .build()
+                HttpResponse::NoContent()
                     .content_type("application/jsonscript; charset=UTF-8")
                     .header(ACCESS_CONTROL_ALLOW_METHODS, "OPTIONS, POST")
                     .sockjs_cache_headers()
                     .sockjs_cors_headers(req.headers())
                     .sockjs_session_cookie(&req)
-                    .finish()?)
+                    .finish())
         }
         else if *req.method() != Method::POST {
-            return Ok(httpcodes::HTTPNotFound.into())
+            return Ok(HttpResponse::NotFound().into())
         }
 
         let session = req.match_info().get("session").unwrap().to_owned();
-        let mut resp = httpcodes::HTTPOk
-            .build()
+        let mut resp = HttpResponse::Ok()
             .header(header::CONTENT_TYPE, "application/javascript; charset=UTF-8")
             .force_close()
             .sockjs_no_cache()
@@ -130,7 +129,7 @@ impl<S, SM> Xhr<S, SM>
                                 flags: Flags::empty()};
         transport.init_transport(session, &mut ctx);
 
-        Ok(resp.body(ctx.actor(transport))?)
+        Ok(resp.body(ctx.actor(transport)))
     }
 }
 

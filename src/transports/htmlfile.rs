@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 
 use actix::*;
 use actix_web::*;
+use actix_web::http::Method;
 use serde_json;
 use regex::Regex;
 
@@ -68,17 +69,17 @@ impl<S, SM> HTMLFile<S, SM>
             static ref CHECK: Regex = Regex::new(r"^[a-zA-Z0-9_\.]+$").unwrap();
         }
         if *req.method() != Method::GET {
-            return Ok(httpcodes::HTTPNotFound.into())
+            return Ok(HttpResponse::NotFound().into())
         }
 
         if let Some(callback) = req.query().get("c").map(|s| s.to_owned()) {
             if !CHECK.is_match(&callback) {
-                return Ok(httpcodes::HTTPInternalServerError.with_body(
+                return Ok(HttpResponse::InternalServerError().body(
                     "invalid \"callback\" parameter"))
             }
 
             let session = req.match_info().get("session").unwrap().to_owned();
-            let mut resp = httpcodes::HTTPOk.build()
+            let mut resp = HttpResponse::Ok()
                 .force_close()
                 .no_chunking()
                 .content_type("text/html; charset=UTF-8")
@@ -106,9 +107,10 @@ impl<S, SM> HTMLFile<S, SM>
                     });
                 }).wait(&mut ctx);
 
-            Ok(resp.body(ctx)?)
+            Ok(resp.body(ctx))
         } else {
-            Ok(httpcodes::HTTPInternalServerError.with_body("\"callback\" parameter required"))
+            Ok(HttpResponse::InternalServerError()
+               .body("\"callback\" parameter required"))
         }
     }
 }

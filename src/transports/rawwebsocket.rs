@@ -41,7 +41,7 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
         // init transport
         tr.init_transport(sid, &mut ctx);
 
-        Ok(resp.body(ctx.actor(tr))?)
+        Ok(resp.body(ctx.actor(tr)))
     }
 
     fn send(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,

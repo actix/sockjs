@@ -39,7 +39,7 @@ impl<S, SM> Websocket<S, SM> where S: Session, SM: SessionManager<S>,
                                flags: Flags::empty()};
         tr.init_transport(session, &mut ctx);
 
-        Ok(resp.body(ctx.actor(tr))?)
+        Ok(resp.body(ctx.actor(tr)))
     }
 
     fn send(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,

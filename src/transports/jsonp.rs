@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 
 use actix::*;
 use actix_web::*;
+use actix_web::http::Method;
 use regex::Regex;
 use serde_json;
 use bytes::BytesMut;
@@ -114,19 +115,18 @@ impl<S, SM> JSONPolling<S, SM>
         }
 
         if *req.method() != Method::GET {
-            return Ok(httpcodes::HTTPNotFound.into())
+            return Ok(HttpResponse::NotFound().into())
         }
 
         if let Some(callback) = req.query().get("c").map(|s| s.to_owned()) {
             if !CHECK.is_match(&callback) {
                 return Ok(
-                    httpcodes::HTTPInternalServerError
-                        .with_body("invalid \"callback\" parameter"))
+                    HttpResponse::InternalServerError()
+                        .body("invalid \"callback\" parameter"))
             }
 
             let session = req.match_info().get("session").unwrap().to_owned();
-            let mut resp = httpcodes::HTTPOk
-                .build()
+            let mut resp = HttpResponse::Ok()
                 .content_type("application/javascript; charset=UTF-8")
                 .force_close()
                 .sockjs_no_cache()
@@ -143,9 +143,10 @@ impl<S, SM> JSONPolling<S, SM>
             // init transport
             transport.init_transport(session, &mut ctx);
 
-            Ok(resp.body(ctx.actor(transport))?)
+            Ok(resp.body(ctx.actor(transport)))
         } else {
-            Ok(httpcodes::HTTPInternalServerError.with_body("\"callback\" parameter required"))
+            Ok(HttpResponse::InternalServerError()
+               .body("\"callback\" parameter required"))
         }
     }
 }
@@ -176,7 +177,7 @@ pub fn JSONPollingSend<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
     where S: Session, SM: SessionManager<S>,
 {
     if *req.method() != Method::POST {
-        Either::A(httpcodes::HTTPBadRequest.with_reason("Method is not allowed"))
+        Either::A(HttpResponse::BadRequest().reason("Method is not allowed").finish())
     } else {
         Either::B(read(req))
     }
@@ -191,14 +192,15 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
 
     Box::new(
         req.clone().body().limit(MAXSIZE)
-            .map_err(|e| Error::from(error::ErrorBadRequest(e)))
+            .map_err(error::ErrorBadRequest)
             .and_then(move |buf| {
                 let sid = Arc::new(sid);
 
                 // empty message
                 if buf.is_empty() {
                     Either::A(
-                        ok(httpcodes::HTTPInternalServerError.with_body("Payload expected.")))
+                        ok(HttpResponse::InternalServerError()
+                           .body("Payload expected.")))
                 } else {
                     // deserialize json
                     let mut msgs: Vec<String> =
@@ -206,8 +208,8 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                     {
                         if buf.len() <= 2 || &buf[..2] != b"d=" {
                             return Either::A(
-                                ok(httpcodes::HTTPInternalServerError
-                                   .with_body("Payload expected.")));
+                                ok(HttpResponse::InternalServerError()
+                                   .body("Payload expected.")));
                         }
 
                         if let Ok(data) = percent_decode(&buf[2..]).decode_utf8() {
@@ -215,21 +217,21 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                                 Ok(msgs) => msgs,
                                 Err(_) => {
                                     return Either::A(
-                                        ok(httpcodes::HTTPInternalServerError.with_body(
+                                        ok(HttpResponse::InternalServerError().body(
                                             "Broken JSON encoding.")));
                                 }
                             }
                         } else {
                             return Either::A(
-                                ok(httpcodes::HTTPInternalServerError
-                                   .with_body("Payload expected.")));
+                                ok(HttpResponse::InternalServerError()
+                                   .body("Payload expected.")));
                         }
                     } else {
                         match serde_json::from_slice(&buf) {
                             Ok(msgs) => msgs,
                             Err(_) => {
                                 return Either::A(
-                                    ok(httpcodes::HTTPInternalServerError.with_body(
+                                    ok(HttpResponse::InternalServerError().body(
                                         "Broken JSON encoding.")));
                             }
                         }
@@ -238,11 +240,11 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                     // do nothing
                     if msgs.is_empty() {
                         Either::A(
-                            ok(httpcodes::HTTPOk.build()
+                            ok(HttpResponse::Ok()
                                .content_type("text/plain; charset=UTF-8")
                                .sockjs_no_cache()
                                .sockjs_session_cookie(&req)
-                               .body("ok").unwrap()))
+                               .body("ok")))
                     } else {
                         let last = msgs.pop().unwrap();
                         for msg in msgs {
@@ -259,16 +261,14 @@ pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
                                 .and_then(move |res| {
                                     match res {
                                         Ok(_) => {
-                                            Ok(httpcodes::HTTPOk
-                                               .build()
+                                            Ok(HttpResponse::Ok()
                                                .content_type("text/plain; charset=UTF-8")
                                                .sockjs_no_cache()
                                                .sockjs_session_cookie(&req)
-                                               .body("ok")
-                                               .unwrap())
+                                               .body("ok"))
                                         },
                                         Err(_) =>
-                                            Err(Error::from(error::ErrorNotFound(()))),
+                                            Err(error::ErrorNotFound(())),
                                     }
                                 }))
                     }
