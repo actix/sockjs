@@ -72,8 +72,8 @@ fn main() {
     let sm: Addr<Syn, _> = SockJSManager::<Echo>::start_default();
     let cl: Addr<Syn, _> = SockJSManager::<Close>::start_default();
 
-    HttpServer::new(
-        move || Application::new()
+    server::new(
+        move || App::new()
             .middleware(middleware::Logger::default())
             .handler(
                 "/echo", sockjs::SockJS::new(sm.clone()).maxsize(4096))
@@ -87,7 +87,7 @@ fn main() {
                 sockjs::SockJS::new(sm.clone()).cookie_needed(true))
             .resource("/exit.html", |r| r.f(|_| {
                 Arbiter::system().do_send(actix::msgs::SystemExit(0));
-                httpcodes::HTTPOk})))
+                HttpResponse::Ok()})))
         .bind("127.0.0.1:52081").unwrap()
         .start();
 

@@ -52,22 +52,20 @@ fn main() {
     // Sockjs sessions manager
     let sm: Addr<Syn, _> = SockJSManager::<Chat>::start_default();
 
-    HttpServer::new(
+    server::new(
         move || {
             let s = sm.clone();
-            Application::new()
+            App::new()
                 .middleware(middleware::Logger::default())
                 .handler(
                     // Sockjs route handler
                     "/sockjs/", sockjs::SockJS::new(s.clone()))
-                .resource("/", |r| r.method(Method::GET).f(|_| -> Result<HttpResponse> {
+                .resource("/", |r| r.method(http::Method::GET).f(|_| -> Result<_> {
                     let mut file = File::open("examples/chat.html")?;
                     let mut content = String::new();
                     file.read_to_string(&mut content)?;
 
-                Ok(httpcodes::HTTPOk
-                   .build()
-                   .body(content)?)
+                    Ok(HttpResponse::Ok().body(content))
                 }))})
         .bind("127.0.0.1:8080").unwrap()
         .start();
