@@ -1,5 +1,10 @@
 # Changes
 
+## 0.4.0 (2018-05-17)
+
+* Use actix web 0.6
+
+
 ## 0.3.0 (2018-04-18)
 
 * Use actix web 0.5

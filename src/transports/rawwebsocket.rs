@@ -1,20 +1,21 @@
-use std::sync::Arc;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use actix::*;
 use actix_web::*;
 use rand;
 
 use context::ChannelItem;
-use protocol::{Frame, CloseCode};
+use manager::{Acquire, Broadcast, Record, Release, SessionManager, SessionMessage};
+use protocol::{CloseCode, Frame};
 use session::{Message, Session, SessionState};
-use manager::{Acquire, Broadcast, Release, Record, SessionManager, SessionMessage};
 
-use super::{SendResult, Flags};
-
+use super::{Flags, SendResult};
 
 pub struct RawWebsocket<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     s: PhantomData<S>,
     sm: PhantomData<SM>,
@@ -22,10 +23,12 @@ pub struct RawWebsocket<S, SM>
     flags: Flags,
 }
 
-impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
+impl<S, SM> RawWebsocket<S, SM>
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
-    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse>
-    {
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse> {
         let mut resp = ws::handshake(&req)?;
 
         // session
@@ -34,23 +37,28 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
         let mut ctx = ws::WebsocketContext::from_request(req.clone());
         ctx.add_stream(ws::WsStream::new(req));
 
-        let mut tr = RawWebsocket{s: PhantomData,
-                                  sm: PhantomData,
-                                  rec: None,
-                                  flags: Flags::empty()};
+        let mut tr = RawWebsocket {
+            s: PhantomData,
+            sm: PhantomData,
+            rec: None,
+            flags: Flags::empty(),
+        };
         // init transport
         tr.init_transport(sid, &mut ctx);
 
         Ok(resp.body(ctx.actor(tr)))
     }
 
-    fn send(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
-            msg: &Frame, record: &mut Record) -> SendResult
-    {
+    fn send(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
+        msg: &Frame,
+        record: &mut Record,
+    ) -> SendResult {
         match *msg {
             Frame::Heartbeat => {
                 ctx.ping("");
-            },
+            }
             Frame::Message(ref s) | Frame::MessageVec(ref s) => {
                 ctx.text(s);
             }
@@ -60,7 +68,10 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
             Frame::Open => (),
             Frame::Close(_) => {
                 record.close();
-                ctx.close(ws::CloseCode::Normal, "Go away!");
+                ctx.close(Some(ws::CloseReason {
+                    code: ws::CloseCode::Normal,
+                    description: Some("Go away!".to_owned()),
+                }));
             }
         };
 
@@ -68,7 +79,10 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
     }
 
     fn send_close(&mut self, ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>, _: CloseCode) {
-        ctx.close(ws::CloseCode::Normal, "Go away!");
+        ctx.close(Some(ws::CloseReason {
+            code: ws::CloseCode::Normal,
+            description: Some("Go away!".to_owned()),
+        }));
     }
 
     fn session_record(&mut self) -> &mut Option<Record> {
@@ -85,13 +99,16 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
             if !ctx.connected() {
                 rec.interrupted();
             }
-            ctx.state().do_send(Release{ses: rec});
+            ctx.state().do_send(Release { ses: rec });
         }
         ctx.stop();
     }
 
-    fn handle_message(&mut self, msg: ChannelItem,
-                      ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>) {
+    fn handle_message(
+        &mut self,
+        msg: ChannelItem,
+        ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
+    ) {
         match msg {
             ChannelItem::Frame(msg) => {
                 if let Some(mut rec) = self.session_record().take() {
@@ -127,21 +144,26 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
     }
 
     /// Send sockjs frame
-    fn send_buffered(&mut self,
-                     ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
-                     record: &mut Record) -> SendResult {
+    fn send_buffered(
+        &mut self,
+        ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
+        record: &mut Record,
+    ) -> SendResult {
         while !record.buffer.is_empty() {
             if let Some(msg) = record.buffer.pop_front() {
                 if let SendResult::Stop = self.send(ctx, msg.as_ref(), record) {
-                    return SendResult::Stop
+                    return SendResult::Stop;
                 }
             }
         }
         SendResult::Continue
     }
 
-    fn init_transport(&mut self, session: String,
-                      ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>) {
+    fn init_transport(
+        &mut self,
+        session: String,
+        ctx: &mut ws::WebsocketContext<Self, Addr<Syn, SM>>,
+    ) {
         // acquire session
         let addr: Addr<Syn, _> = ctx.address();
         ctx.state().send(Acquire::new(session, addr.recipient()))
@@ -203,21 +225,26 @@ impl<S, SM> RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>,
 }
 
 // Http actor implementation
-impl<S, SM> Actor for RawWebsocket<S, SM> where S: Session, SM: SessionManager<S>
+impl<S, SM> Actor for RawWebsocket<S, SM>
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     type Context = ws::WebsocketContext<Self, Addr<Syn, SM>>;
 
     fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
         if let Some(mut rec) = self.rec.take() {
             rec.close();
-            ctx.state().do_send(Release{ses: rec});
+            ctx.state().do_send(Release { ses: rec });
         }
         Running::Stop
     }
 }
 
 impl<S, SM> Handler<ChannelItem> for RawWebsocket<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     type Result = ();
 
@@ -227,7 +254,9 @@ impl<S, SM> Handler<ChannelItem> for RawWebsocket<S, SM>
 }
 
 impl<S, SM> Handler<Broadcast> for RawWebsocket<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     type Result = ();
 
@@ -240,11 +269,13 @@ impl<S, SM> Handler<Broadcast> for RawWebsocket<S, SM>
 }
 
 impl<S, SM> StreamHandler<ws::Message, ws::ProtocolError> for RawWebsocket<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     fn error(&mut self, _: ws::ProtocolError, ctx: &mut Self::Context) -> Running {
         if let Some(rec) = self.rec.take() {
-            ctx.state().do_send(Release{ses: rec});
+            ctx.state().do_send(Release { ses: rec });
         }
         self.release(ctx);
         Running::Stop
@@ -257,10 +288,10 @@ impl<S, SM> StreamHandler<ws::Message, ws::ProtocolError> for RawWebsocket<S, SM
             ws::Message::Text(text) => {
                 if !text.is_empty() {
                     if let Some(ref rec) = self.rec {
-                        ctx.state().do_send(
-                            SessionMessage {
-                                sid: Arc::clone(&rec.sid),
-                                msg: Message(text)});
+                        ctx.state().do_send(SessionMessage {
+                            sid: Arc::clone(&rec.sid),
+                            msg: Message(text),
+                        });
                     }
                 }
             }

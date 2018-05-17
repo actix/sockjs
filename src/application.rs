@@ -1,29 +1,30 @@
-use std::rc::Rc;
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::collections::HashSet;
+use std::marker::PhantomData;
+use std::rc::Rc;
 
+use actix::{Actor, Addr, Syn};
+use actix_web::dev::{AsyncResult, Handler, Resource};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse};
+use futures::future::Either;
+use http::{header, Method};
 use md5;
 use rand::{self, Rng, ThreadRng};
-use http::{header, Method};
-use futures::future::Either;
-use actix::{Actor, Addr, Syn};
-use actix_web::dev::{Resource, Handler, Reply};
-use actix_web::{HttpRequest, HttpResponse, HttpMessage};
 
-use protocol;
-use transports;
 use context::SockJSContext;
-use session::Session;
 use manager::SessionManager;
+use protocol;
+use session::Session;
+use transports;
 use utils::{Info, SockjsHeaders};
 
 /// Sockjs application
 ///
 /// Sockjs application implements sockjs protocol.
-pub struct SockJS<A, SM, S=()>
-    where A: Actor<Context=SockJSContext<A>> + Session,
-          SM: SessionManager<A>,
+pub struct SockJS<A, SM, S = ()>
+where
+    A: Actor<Context = SockJSContext<A>> + Session,
+    SM: SessionManager<A>,
 {
     manager: Rc<Addr<Syn, SM>>,
     act: PhantomData<A>,
@@ -42,45 +43,52 @@ const ROUTES: [RouteType; 5] = [
     RouteType::Transport,
     RouteType::RawWebsocket,
     RouteType::IFrame,
-    RouteType::IFrame];
+    RouteType::IFrame,
+];
 
 const PATTERNS: [&str; 5] = [
     "info",
     "{server}/{session}/{transport}",
     "websocket",
     "iframe.html",
-    "iframe{version}.html"];
-
+    "iframe{version}.html",
+];
 
 impl<A, SM, S> SockJS<A, SM, S>
-    where A: Actor<Context=SockJSContext<A>> + Session,
-          SM: SessionManager<A>,
-          S: 'static,
+where
+    A: Actor<Context = SockJSContext<A>> + Session,
+    SM: SessionManager<A>,
+    S: 'static,
 {
     /// Create new sockjs application. Sockjs application requires
     /// Session manager's address.
-    pub fn new(manager: Addr<Syn, SM>) -> Self
-    {
+    pub fn new(manager: Addr<Syn, SM>) -> Self {
         let html = protocol::IFRAME_HTML.to_owned();
         let digest = md5::compute(&html);
-        let patterns: Vec<_> = PATTERNS.iter()
-            .map(|s| Resource::with_prefix("", s, "")).collect();
+        let patterns: Vec<_> = PATTERNS
+            .iter()
+            .map(|s| Resource::with_prefix("", s, "", false))
+            .collect();
 
-        SockJS { patterns,
-                 act: PhantomData,
-                 state: PhantomData,
-                 rng: RefCell::new(rand::thread_rng()),
-                 manager: Rc::new(manager),
-                 iframe_html: Rc::new(html),
-                 iframe_html_md5: format!("{:x}", digest),
-                 disabled_transports: HashSet::new(),
-                 max_size: transports::MAXSIZE,
-                 cookie_needed: false }
+        SockJS {
+            patterns,
+            act: PhantomData,
+            state: PhantomData,
+            rng: RefCell::new(rand::thread_rng()),
+            manager: Rc::new(manager),
+            iframe_html: Rc::new(html),
+            iframe_html_md5: format!("{:x}", digest),
+            disabled_transports: HashSet::new(),
+            max_size: transports::MAXSIZE,
+            cookie_needed: false,
+        }
     }
 
     /// Disable specific transports
     pub fn disable_transports<T, I>(mut self, disabled: I) -> Self
-        where T: Into<String>, I: IntoIterator<Item = T>
+    where
+        T: Into<String>,
+        I: IntoIterator<Item = T>,
     {
         for i in disabled {
             self.disabled_transports.insert(i.into());
@@ -110,18 +118,20 @@ enum RouteType {
 }
 
 impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
-    where A: Actor<Context=SockJSContext<A>> + Session,
-          SM: SessionManager<A>,
-          S: 'static
+where
+    A: Actor<Context = SockJSContext<A>> + Session,
+    SM: SessionManager<A>,
+    S: 'static,
 {
-    type Result = Reply;
+    type Result = AsyncResult<HttpResponse>;
 
-    fn handle(&mut self, req: HttpRequest<S>) -> Reply {
+    fn handle(&mut self, req: HttpRequest<S>) -> AsyncResult<HttpResponse> {
         let idx = if let Some(path) = req.match_info().get("tail") {
             if path.is_empty() {
                 return HttpResponse::Ok()
                     .content_type("text/plain; charset=UTF-8")
-                    .body("Welcome to SockJS!\n").into()
+                    .body("Welcome to SockJS!\n")
+                    .into();
             }
 
             let mut i = None;
@@ -135,10 +145,10 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
             if let Some(idx) = i {
                 idx
             } else {
-                return HttpResponse::NotFound().finish().into()
+                return HttpResponse::NotFound().finish().into();
             }
         } else {
-            return HttpResponse::NotFound().finish().into()
+            return HttpResponse::NotFound().finish().into();
         };
 
         match ROUTES[idx] {
@@ -151,7 +161,9 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                         .json(Info::new(
                             self.rng.borrow_mut().gen::<u32>(),
                             !self.disabled_transports.contains("websocket"),
-                            self.cookie_needed)).into()
+                            self.cookie_needed,
+                        ))
+                        .into()
                 } else if *req.method() == Method::OPTIONS {
                     HttpResponse::NoContent()
                         .content_type("application/json;charset=UTF-8")
@@ -159,11 +171,12 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                         .sockjs_allow_methods()
                         .sockjs_cors_headers(req.headers())
                         .sockjs_session_cookie(&req)
-                        .finish().into()
+                        .finish()
+                        .into()
                 } else {
                     HttpResponse::MethodNotAllowed().finish().into()
                 }
-            },
+            }
             RouteType::IFrame => {
                 if req.headers().contains_key(header::IF_NONE_MATCH) {
                     HttpResponse::NotModified()
@@ -179,12 +192,12 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                         .body(&self.iframe_html)
                         .into()
                 }
-            },
+            }
             RouteType::Transport => {
                 let req2 = req.change_state(Rc::clone(&self.manager));
                 let tr = req.match_info().get("transport").unwrap().to_owned();
                 if self.disabled_transports.contains(&tr) {
-                    return HttpResponse::NotFound().finish().into()
+                    return HttpResponse::NotFound().finish().into();
                 }
 
                 // check valid session and server params
@@ -192,9 +205,14 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                     let sid = req.match_info().get("session").unwrap();
                     let server = req.match_info().get("server").unwrap();
                     if sid.is_empty() || sid.contains('.') || server.contains('.') {
-                        return HttpResponse::NotFound().finish().into()
+                        return HttpResponse::NotFound().finish().into();
                     }
-                    trace!("sockjs transport: {}, session: {}, srv: {}", tr, sid, server);
+                    trace!(
+                        "sockjs transport: {}, session: {}, srv: {}",
+                        tr,
+                        sid,
+                        server
+                    );
                 }
 
                 if tr == "websocket" {
@@ -222,10 +240,10 @@ impl<A, SM, S> Handler<S> for SockJS<A, SM, S>
                 } else {
                     HttpResponse::NotFound().finish().into()
                 }
-            },
-            RouteType::RawWebsocket =>
-                transports::RawWebsocket::init(
-                    req.change_state(Rc::clone(&self.manager))).into(),
+            }
+            RouteType::RawWebsocket => {
+                transports::RawWebsocket::init(req.change_state(Rc::clone(&self.manager))).into()
+            }
         }
     }
 }

@@ -1,27 +1,28 @@
 #![allow(unused_imports)]
-use std::sync::Arc;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use actix::*;
-use actix_web::*;
 use actix_web::http::Method;
+use actix_web::*;
+use bytes::BytesMut;
+use futures::future::{ok, Either, Future};
+use percent_encoding::percent_decode;
 use regex::Regex;
 use serde_json;
-use bytes::BytesMut;
-use futures::future::{ok, Future, Either};
-use percent_encoding::percent_decode;
 
 use context::ChannelItem;
-use protocol::{Frame, CloseCode};
-use utils::SockjsHeaders;
-use session::{Message, Session};
 use manager::{Broadcast, Record, SessionManager, SessionMessage};
+use protocol::{CloseCode, Frame};
+use session::{Message, Session};
+use utils::SockjsHeaders;
 
-use super::{MAXSIZE, Transport, SendResult, Flags};
-
+use super::{Flags, SendResult, Transport, MAXSIZE};
 
 pub struct JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     s: PhantomData<S>,
     sm: PhantomData<SM>,
@@ -32,7 +33,9 @@ pub struct JSONPolling<S, SM>
 
 // Http actor implementation
 impl<S, SM> Actor for JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     type Context = HttpContext<Self, Addr<Syn, SM>>;
 
@@ -42,38 +45,41 @@ impl<S, SM> Actor for JSONPolling<S, SM>
     }
 }
 
-impl<S, SM>  JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>
+impl<S, SM> JSONPolling<S, SM>
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     fn write(&self, s: &str, ctx: &mut HttpContext<Self, Addr<Syn, SM>>) {
-        ctx.write(format!("/**/{}({});\r\n",
-                          self.callback, serde_json::to_string(s).unwrap()))
+        ctx.write(format!(
+            "/**/{}({});\r\n",
+            self.callback,
+            serde_json::to_string(s).unwrap()
+        ))
     }
 }
 
 // Transport implementation
 impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
-    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record)
-            -> SendResult
-    {
+    fn send(&mut self, ctx: &mut Self::Context, msg: &Frame, record: &mut Record) -> SendResult {
         match *msg {
             Frame::Heartbeat => {
                 self.write("h", ctx);
-            },
+            }
             Frame::Message(ref s) => {
                 self.write(&format!("a[{:?}]", s), ctx);
             }
             Frame::MessageVec(ref s) => {
                 self.write(&format!("a{}", s), ctx);
             }
-            Frame::MessageBlob(_) => {
-                unimplemented!()
-            }
+            Frame::MessageBlob(_) => unimplemented!(),
             Frame::Open => {
                 self.write("o", ctx);
-            },
+            }
             Frame::Close(code) => {
                 record.close();
                 let blob = format!("c[{},{:?}]", code.num(), code.reason());
@@ -84,14 +90,12 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
         SendResult::Stop
     }
 
-    fn send_heartbeat(&mut self, ctx: &mut Self::Context)
-    {
+    fn send_heartbeat(&mut self, ctx: &mut Self::Context) {
         self.write("h\n", ctx);
         ctx.write_eof();
     }
 
-    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode)
-    {
+    fn send_close(&mut self, ctx: &mut Self::Context, code: CloseCode) {
         self.write(&format!("c[{},{:?}]", code.num(), code.reason()), ctx);
         ctx.write_eof();
     }
@@ -106,23 +110,22 @@ impl<S, SM> Transport<S, SM> for JSONPolling<S, SM>
 }
 
 impl<S, SM> JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
-    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse>
-    {
+    pub fn init(req: HttpRequest<Addr<Syn, SM>>) -> Result<HttpResponse> {
         lazy_static! {
             static ref CHECK: Regex = Regex::new(r"^[a-zA-Z0-9_\.]+$").unwrap();
         }
 
         if *req.method() != Method::GET {
-            return Ok(HttpResponse::NotFound().into())
+            return Ok(HttpResponse::NotFound().into());
         }
 
         if let Some(callback) = req.query().get("c").map(|s| s.to_owned()) {
             if !CHECK.is_match(&callback) {
-                return Ok(
-                    HttpResponse::InternalServerError()
-                        .body("invalid \"callback\" parameter"))
+                return Ok(HttpResponse::InternalServerError().body("invalid \"callback\" parameter"));
             }
 
             let session = req.match_info().get("session").unwrap().to_owned();
@@ -135,24 +138,27 @@ impl<S, SM> JSONPolling<S, SM>
                 .take();
 
             let mut ctx = HttpContext::from_request(req);
-            let mut transport = JSONPolling{s: PhantomData,
-                                            sm: PhantomData,
-                                            rec: None,
-                                            flags: Flags::empty(),
-                                            callback};
+            let mut transport = JSONPolling {
+                s: PhantomData,
+                sm: PhantomData,
+                rec: None,
+                flags: Flags::empty(),
+                callback,
+            };
             // init transport
             transport.init_transport(session, &mut ctx);
 
             Ok(resp.body(ctx.actor(transport)))
         } else {
-            Ok(HttpResponse::InternalServerError()
-               .body("\"callback\" parameter required"))
+            Ok(HttpResponse::InternalServerError().body("\"callback\" parameter required"))
         }
     }
 }
 
 impl<S, SM> Handler<ChannelItem> for JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     type Result = ();
 
@@ -162,7 +168,9 @@ impl<S, SM> Handler<ChannelItem> for JSONPolling<S, SM>
 }
 
 impl<S, SM> Handler<Broadcast> for JSONPolling<S, SM>
-    where S: Session, SM: SessionManager<S>,
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     type Result = ();
 
@@ -172,106 +180,113 @@ impl<S, SM> Handler<Broadcast> for JSONPolling<S, SM>
 }
 
 #[allow(non_snake_case)]
-pub fn JSONPollingSend<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
-                              -> Either<HttpResponse, Box<Future<Item=HttpResponse, Error=Error>>>
-    where S: Session, SM: SessionManager<S>,
+pub fn JSONPollingSend<S, SM>(
+    req: HttpRequest<Addr<Syn, SM>>,
+) -> Either<HttpResponse, Box<Future<Item = HttpResponse, Error = Error>>>
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     if *req.method() != Method::POST {
-        Either::A(HttpResponse::BadRequest().reason("Method is not allowed").finish())
+        Either::A(
+            HttpResponse::BadRequest()
+                .reason("Method is not allowed")
+                .finish(),
+        )
     } else {
         Either::B(read(req))
     }
-
 }
 
-pub fn read<S, SM>(req: HttpRequest<Addr<Syn, SM>>)
-                   -> Box<Future<Item=HttpResponse, Error=Error>>
-    where S: Session, SM: SessionManager<S>
+pub fn read<S, SM>(
+    req: HttpRequest<Addr<Syn, SM>>,
+) -> Box<Future<Item = HttpResponse, Error = Error>>
+where
+    S: Session,
+    SM: SessionManager<S>,
 {
     let sid = req.match_info().get("session").unwrap().to_owned();
 
     Box::new(
-        req.clone().body().limit(MAXSIZE)
+        req.clone()
+            .body()
+            .limit(MAXSIZE)
             .map_err(error::ErrorBadRequest)
             .and_then(move |buf| {
                 let sid = Arc::new(sid);
 
                 // empty message
                 if buf.is_empty() {
-                    Either::A(
-                        ok(HttpResponse::InternalServerError()
-                           .body("Payload expected.")))
+                    Either::A(ok(
+                        HttpResponse::InternalServerError().body("Payload expected.")
+                    ))
                 } else {
                     // deserialize json
                     let mut msgs: Vec<String> =
-                        if req.content_type() == "application/x-www-form-urlencoded"
-                    {
-                        if buf.len() <= 2 || &buf[..2] != b"d=" {
-                            return Either::A(
-                                ok(HttpResponse::InternalServerError()
-                                   .body("Payload expected.")));
-                        }
+                        if req.content_type() == "application/x-www-form-urlencoded" {
+                            if buf.len() <= 2 || &buf[..2] != b"d=" {
+                                return Either::A(ok(
+                                    HttpResponse::InternalServerError().body("Payload expected.")
+                                ));
+                            }
 
-                        if let Ok(data) = percent_decode(&buf[2..]).decode_utf8() {
-                            match serde_json::from_slice(data.as_ref().as_ref()) {
-                                Ok(msgs) => msgs,
-                                Err(_) => {
-                                    return Either::A(
-                                        ok(HttpResponse::InternalServerError().body(
-                                            "Broken JSON encoding.")));
+                            if let Ok(data) = percent_decode(&buf[2..]).decode_utf8() {
+                                match serde_json::from_slice(data.as_ref().as_ref()) {
+                                    Ok(msgs) => msgs,
+                                    Err(_) => {
+                                        return Either::A(ok(HttpResponse::InternalServerError()
+                                            .body("Broken JSON encoding.")));
+                                    }
                                 }
+                            } else {
+                                return Either::A(ok(
+                                    HttpResponse::InternalServerError().body("Payload expected.")
+                                ));
                             }
                         } else {
-                            return Either::A(
-                                ok(HttpResponse::InternalServerError()
-                                   .body("Payload expected.")));
-                        }
-                    } else {
-                        match serde_json::from_slice(&buf) {
-                            Ok(msgs) => msgs,
-                            Err(_) => {
-                                return Either::A(
-                                    ok(HttpResponse::InternalServerError().body(
-                                        "Broken JSON encoding.")));
+                            match serde_json::from_slice(&buf) {
+                                Ok(msgs) => msgs,
+                                Err(_) => {
+                                    return Either::A(ok(HttpResponse::InternalServerError()
+                                        .body("Broken JSON encoding.")));
+                                }
                             }
-                        }
-                    };
+                        };
 
                     // do nothing
                     if msgs.is_empty() {
-                        Either::A(
-                            ok(HttpResponse::Ok()
-                               .content_type("text/plain; charset=UTF-8")
-                               .sockjs_no_cache()
-                               .sockjs_session_cookie(&req)
-                               .body("ok")))
+                        Either::A(ok(HttpResponse::Ok()
+                            .content_type("text/plain; charset=UTF-8")
+                            .sockjs_no_cache()
+                            .sockjs_session_cookie(&req)
+                            .body("ok")))
                     } else {
                         let last = msgs.pop().unwrap();
                         for msg in msgs {
-                            req.state().do_send(
-                                SessionMessage {
-                                    sid: Arc::clone(&sid),
-                                    msg: Message(msg) });
+                            req.state().do_send(SessionMessage {
+                                sid: Arc::clone(&sid),
+                                msg: Message(msg),
+                            });
                         }
 
                         Either::B(
-                            req.state().send(SessionMessage { sid: Arc::clone(&sid),
-                                                              msg: Message(last) })
+                            req.state()
+                                .send(SessionMessage {
+                                    sid: Arc::clone(&sid),
+                                    msg: Message(last),
+                                })
                                 .from_err()
-                                .and_then(move |res| {
-                                    match res {
-                                        Ok(_) => {
-                                            Ok(HttpResponse::Ok()
-                                               .content_type("text/plain; charset=UTF-8")
-                                               .sockjs_no_cache()
-                                               .sockjs_session_cookie(&req)
-                                               .body("ok"))
-                                        },
-                                        Err(_) =>
-                                            Err(error::ErrorNotFound(())),
-                                    }
-                                }))
+                                .and_then(move |res| match res {
+                                    Ok(_) => Ok(HttpResponse::Ok()
+                                        .content_type("text/plain; charset=UTF-8")
+                                        .sockjs_no_cache()
+                                        .sockjs_session_cookie(&req)
+                                        .body("ok")),
+                                    Err(_) => Err(error::ErrorNotFound("not found")),
+                                }),
+                        )
                     }
                 }
-            }))
+            }),
+    )
 }
