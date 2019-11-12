@@ -1,6 +1,6 @@
 # SockJS server [![Build Status](https://travis-ci.org/actix/sockjs.svg?branch=master)](https://travis-ci.org/actix/sockjs) [![codecov](https://codecov.io/gh/actix/sockjs/branch/master/graph/badge.svg)](https://codecov.io/gh/actix/sockjs) [![crates.io](http://meritbadge.herokuapp.com/sockjs)](https://crates.io/crates/sockjs)
 
-[SockJS](https://github.com/sockjs) server for for [Actix framework](https://github.com/actix/actix).
+[SockJS](https://github.com/sockjs) server for [Actix framework](https://github.com/actix/actix).
 
 * [API Documentation](http://actix.github.io/sockjs/sockjs/)
 * Cargo package: [sockjs](https://crates.io/crates/sockjs)
